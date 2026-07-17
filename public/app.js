@@ -6,6 +6,7 @@ const state = {
   outlineTab: 'plot',
   jobs: new Map(),
   continuousProjects: new Set(),
+  deriveSource: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -140,8 +141,10 @@ function newProject() {
 function render() {
   if (!state.current) return renderCreate();
   breadcrumb.textContent = `作品 / ${state.current.title}`;
-  topActions.innerHTML = state.current.chapters?.some((chapter) => chapter.content)
-    ? `<a class="btn secondary" href="/api/projects/${state.current.id}/export"><i data-lucide="download"></i>导出</a>` : '';
+  const exportAction = state.current.chapters?.some((chapter) => chapter.content)
+    ? `<a class="btn secondary" href="/api/projects/${state.current.id}/export"><i data-lucide="download"></i><span class="action-label">导出</span></a>` : '';
+  topActions.innerHTML = `<button class="btn secondary" id="deriveProject"><i data-lucide="copy-plus"></i><span class="action-label">衍生创作</span></button>${exportAction}`;
+  $('#deriveProject').onclick = openDeriveDialog;
   if (state.current.status === 'draft' || state.current.status === 'planning') return renderPlanning();
   if (state.current.status === 'outline_review') return renderOutline();
   return renderStudio();
@@ -587,6 +590,74 @@ async function continuousWrite(projectId) {
   state.continuousProjects.delete(projectId);
   if (state.current?.id === projectId) renderStudio(true);
 }
+
+function applyDeriveMode(resetDefaults = false) {
+  const form = $('#deriveForm');
+  const source = state.deriveSource;
+  if (!source) return;
+  const mode = form.elements.mode.value;
+  const sequel = mode === 'sequel';
+  $('#deriveModeNote').textContent = sequel
+    ? '继承原作人物、世界设定、全局摘要和最近结尾，再规划新的冲突与章节。'
+    : '复用类型、篇幅、文风和自定义设定，不携带原作剧情与章节正文。';
+  if (resetDefaults) {
+    form.elements.title.value = sequel ? `${source.title}·续篇` : `${source.title}·新作`;
+    form.elements.theme.value = sequel ? `承接《${source.title}》结局，展开新的故事` : source.theme;
+  }
+}
+
+function openDeriveDialog() {
+  const source = state.current;
+  if (!source) return;
+  state.deriveSource = source;
+  const form = $('#deriveForm');
+  const hasStory = Boolean(source.global_summary || source.chapters?.some((chapter) => chapter.content));
+  form.elements.mode.value = hasStory ? 'sequel' : 'template';
+  form.elements.genre.value = source.genre;
+  form.elements.chapter_count.value = source.chapter_count;
+  form.elements.words_per_chapter.value = source.words_per_chapter;
+  form.elements.style.value = source.style || '';
+  form.elements.extra_prompt.value = source.extra_prompt || '';
+  $('#deriveSourceLabel').textContent = `基于《${source.title}》创建独立新作品`;
+  applyDeriveMode(true);
+  $('#deriveDialog').showModal();
+  icons();
+}
+
+$('#deriveForm').querySelectorAll('input[name="mode"]').forEach((radio) => {
+  radio.onchange = () => applyDeriveMode(true);
+});
+
+$('#deriveForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const source = state.deriveSource;
+  if (!source) return;
+  const button = event.submitter || $('#deriveForm button[type="submit"]');
+  button.disabled = true;
+  try {
+    const body = Object.fromEntries(new FormData(event.currentTarget));
+    body.chapter_count = Number(body.chapter_count);
+    body.words_per_chapter = Number(body.words_per_chapter);
+    const project = await api(`/api/projects/${source.id}/derive`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    state.navigationTarget = project.id;
+    state.current = project;
+    state.selectedChapter = 1;
+    $('#deriveDialog').close();
+    await loadProjects();
+    render();
+    toast(body.mode === 'sequel' ? '续作草稿已创建' : '模板新作已创建');
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$('#cancelDerive').onclick = () => $('#deriveDialog').close();
+$('#closeDerive').onclick = () => $('#deriveDialog').close();
+$('#closeSettings').onclick = () => $('#settingsDialog').close();
 
 async function openSettings() {
   try {

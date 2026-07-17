@@ -67,6 +67,45 @@ function validateProjectInput(body) {
   return { title, genre, theme, chapterCount, words };
 }
 
+function parseJSON(value, fallback) {
+  try {
+    return JSON.parse(value || '');
+  } catch {
+    return fallback;
+  }
+}
+
+function buildSequelPrompt(source, customPrompt) {
+  const characters = parseJSON(source.characters_json, []);
+  const world = parseJSON(source.world_json, {});
+  const plot = parseJSON(source.plot_json, {});
+  const lastChapter = db.listChapters(source.id)
+    .filter((chapter) => chapter.status === 'done')
+    .at(-1);
+
+  const characterBrief = characters.slice(0, 10).map((character) =>
+    [character.name, character.role, character.personality, character.goal, character.arc]
+      .filter(Boolean)
+      .join(' | ')
+  ).join('\n');
+
+  const sourceBrief = [
+    `【原作《${source.title}》的续作约束】`,
+    `原作全局摘要：${(source.global_summary || plot.premise || '暂无').slice(0, 2800)}`,
+    lastChapter?.summary ? `原作最后一章摘要：${lastChapter.summary.slice(0, 1000)}` : '',
+    lastChapter?.content ? `原作结尾片段：${lastChapter.content.slice(-1200)}` : '',
+    characterBrief ? `原作主要人物（姓名和既有关系必须保持）：\n${characterBrief.slice(0, 2600)}` : '',
+    world.setting ? `原作世界背景：${String(world.setting).slice(0, 900)}` : '',
+    world.rules ? `原作世界规则：${String(world.rules).slice(0, 900)}` : '',
+    plot.conflict ? `原作主要冲突：${String(plot.conflict).slice(0, 700)}` : '',
+    '新故事必须承接原作结局与人物状态，不得复述原作主线；需要发展新的核心冲突和人物弧光。',
+  ].filter(Boolean).join('\n\n');
+
+  const suffix = customPrompt ? `\n\n【本次续作补充设定】\n${customPrompt}` : '';
+  const available = Math.max(1000, 10000 - suffix.length);
+  return `${sourceBrief.slice(0, available)}${suffix}`.slice(0, 10000);
+}
+
 function saveOutline(project, outline) {
   const normalized = {
     title_suggestion: outline.title_suggestion || project.title,
@@ -151,6 +190,38 @@ app.post('/api/projects', (req, res) => {
     const { title, genre, theme, chapterCount, words } = validateProjectInput(req.body);
     const extraPrompt = String(req.body.extra_prompt || '').trim();
     if (extraPrompt.length > 10000) throw new Error('自定义设定不能超过 10000 字');
+    const project = db.createProject({
+      id: uuid(),
+      title,
+      genre,
+      theme,
+      chapter_count: chapterCount,
+      words_per_chapter: words,
+      style: String(req.body.style || '').trim(),
+      extra_prompt: extraPrompt,
+      status: 'draft',
+    });
+    res.status(201).json(parseProject(project));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/projects/:id/derive', (req, res) => {
+  const source = requireProject(req, res);
+  if (!source) return;
+  try {
+    const mode = req.body.mode === 'sequel' ? 'sequel' : 'template';
+    const { title, genre, theme, chapterCount, words } = validateProjectInput(req.body);
+    const customPrompt = String(req.body.extra_prompt || '').trim();
+    if (customPrompt.length > 10000) throw new Error('自定义设定不能超过 10000 字');
+    if (mode === 'sequel' && customPrompt.length > 5000) {
+      throw new Error('写后续时补充设定不能超过 5000 字，请精简后重试');
+    }
+    const extraPrompt = mode === 'sequel'
+      ? buildSequelPrompt(source, customPrompt)
+      : customPrompt;
+
     const project = db.createProject({
       id: uuid(),
       title,

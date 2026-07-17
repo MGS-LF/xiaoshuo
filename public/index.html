@@ -39,7 +39,7 @@
     <form method="dialog" class="dialog-panel" id="settingsForm">
       <div class="dialog-head">
         <div><h2>大模型连接</h2><p>兼容 OpenAI Chat Completions 接口</p></div>
-        <button class="icon-btn" value="cancel" title="关闭"><i data-lucide="x"></i></button>
+        <button type="button" class="icon-btn" id="closeSettings" title="关闭"><i data-lucide="x"></i></button>
       </div>
       <div class="form-grid single">
         <label>接口地址<input name="base_url" required placeholder="https://api.openai.com/v1"></label>
@@ -54,6 +54,35 @@
         <span class="dialog-note"><i data-lucide="database"></i>配置保存在本机 SQLite</span>
         <button type="button" class="btn secondary" id="testModel">测试连接</button>
         <button type="submit" class="btn primary">保存配置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="deriveDialog" class="dialog derive-dialog">
+    <form method="dialog" class="dialog-panel" id="deriveForm">
+      <div class="dialog-head">
+        <div><h2>衍生创作</h2><p id="deriveSourceLabel"></p></div>
+        <button type="button" class="icon-btn" id="closeDerive" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="mode-segment" role="radiogroup" aria-label="衍生模式">
+        <label class="mode-option"><input type="radio" name="mode" value="sequel"><span><i data-lucide="book-plus"></i>写后续</span></label>
+        <label class="mode-option"><input type="radio" name="mode" value="template"><span><i data-lucide="copy-plus"></i>复用模板</span></label>
+      </div>
+      <p class="derive-mode-note" id="deriveModeNote"></p>
+      <div class="form-grid">
+        <label>新书名<input name="title" required maxlength="80"></label>
+        <label>类型<input name="genre" required maxlength="50"></label>
+        <label class="full">新主题<input name="theme" required maxlength="300"></label>
+        <label>章节数<input name="chapter_count" type="number" required min="1" max="200"></label>
+        <label>每章字数<input name="words_per_chapter" type="number" required min="500" max="10000" step="100"></label>
+        <label class="full">文风<input name="style"></label>
+        <label class="full">补充或修改设定
+          <textarea name="extra_prompt" maxlength="10000" placeholder="可修改人物、背景、关系或新故事方向"></textarea>
+        </label>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn secondary" id="cancelDerive">取消</button>
+        <button type="submit" class="btn primary"><i data-lucide="plus"></i>创建新作品</button>
       </div>
     </form>
   </dialog>

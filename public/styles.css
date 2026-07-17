@@ -186,6 +186,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .progress-line b { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 
 .dialog { width: min(560px, calc(100vw - 30px)); padding: 0; border: 0; border-radius: 6px; box-shadow: var(--shadow); }
+.derive-dialog { width: min(720px, calc(100vw - 30px)); }
 .dialog::backdrop { background: rgba(18, 22, 26, .56); }
 .dialog-panel { padding: 24px; }
 .dialog-head { display: flex; align-items: start; justify-content: space-between; margin-bottom: 22px; }
@@ -194,6 +195,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .dialog-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 23px; }
 .dialog-note { display: inline-flex; align-items: center; gap: 5px; margin-right: auto; color: var(--muted); font-size: 10px; }
 .dialog-note svg { width: 13px; }
+.mode-segment { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 10px; padding: 4px; background: #eef0f2; }
+.mode-option { display: block; position: relative; }
+.mode-option input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.mode-option span { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 39px; border-radius: 3px; color: #686f77; font-size: 12px; }
+.mode-option span svg { width: 16px; height: 16px; }
+.mode-option input:checked + span { background: white; color: var(--ink); box-shadow: 0 1px 5px rgba(20,25,30,.1); font-weight: 600; }
+.mode-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.derive-mode-note { min-height: 36px; margin: 0 0 17px; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: grid; gap: 8px; }
 .toast { max-width: 360px; padding: 11px 14px; border-left: 3px solid var(--accent); background: #1d2227; color: white; box-shadow: var(--shadow); font-size: 12px; }
 .toast.error { border-left-color: #f27461; }
@@ -222,5 +231,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .form-footer .btn, .sticky-confirm .btn { width: 100%; }
   .dialog-actions { flex-wrap: wrap; }
   .dialog-note { width: 100%; margin-bottom: 4px; }
+  .top-actions .btn { min-width: 36px; padding: 0 9px; }
+  .top-actions .action-label { display: none; }
   .novel-editor { font-size: 15px; }
 }
