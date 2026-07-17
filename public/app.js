@@ -168,8 +168,11 @@ function renderCreate() {
           <label class="full">主题<input name="theme" required maxlength="300" placeholder="例如：失忆调查员发现每个梦境都对应一桩未发生的案件"></label>
           <label>章节数<input name="chapter_count" type="number" required min="1" max="200" value="20"></label>
           <label>每章字数<input name="words_per_chapter" type="number" required min="500" max="10000" step="100" value="2000"></label>
-          <label>文风<input name="style" placeholder="例如：冷峻克制，多用短句"></label>
-          <label>额外要求<input name="extra_prompt" placeholder="例如：双视角，开放式结局"></label>
+          <label class="full">文风<input name="style" placeholder="例如：冷峻克制，多用短句"></label>
+          <label class="full">自定义设定（可选）
+            <textarea name="extra_prompt" class="custom-setting-input" maxlength="10000" placeholder="可预设人物姓名、身份、性格、关系、世界规则、关键情节或禁用内容。&#10;例如：主角叫林默，22岁，法医专业；女主苏遥是他的青梅竹马，两人开篇处于冷战状态。人物姓名和关系不得修改。"></textarea>
+            <span class="field-help">模型规划大纲和撰写正文时会优先遵守这里的内容</span>
+          </label>
         </div>
         <div class="form-footer">
           <span class="hint">创建后再调用模型规划大纲</span>
@@ -219,6 +222,12 @@ function renderPlanning() {
       <div class="stage-icon">${loading ? '<span class="loader"></span>' : '<i data-lucide="network"></i>'}</div>
       <h2>${loading ? '正在推演故事结构' : '生成全书大纲'}</h2>
       <p>${loading ? '模型正在组织世界观、人物弧光、时间线与逐章剧情。长篇规划可能需要数十秒。' : '大纲会按世界设定、主要人物、时间线、大体剧情和章节规划分块展示，确认后才开始写作。'}</p>
+      <div class="custom-brief">
+        <label>自定义设定（可选）
+          <textarea id="planningCustomSetting" maxlength="10000" ${loading ? 'readonly' : ''} placeholder="预设人物、人物关系、世界规则、关键情节或其他必须遵守的内容">${escapeHtml(state.current.extra_prompt || '')}</textarea>
+          <span class="field-help">预设人物的姓名、身份和关系会作为大纲的硬性约束</span>
+        </label>
+      </div>
       <button class="btn primary" id="generateOutline" ${loading ? 'disabled' : ''}>${loading ? '<span class="loader"></span>规划中' : '<i data-lucide="sparkles"></i>生成大纲'}</button>
     </section>`;
   if (!loading) $('#generateOutline').onclick = generateOutlineAction;
@@ -230,9 +239,16 @@ async function generateOutlineAction() {
   const jobKey = outlineJobKey(projectId);
   state.jobs.set(jobKey, { projectId, type: 'outline', status: 'planning' });
   renderProjectList();
-  state.current.status = 'planning';
-  renderPlanning();
   try {
+    const extraPrompt = $('#planningCustomSetting')?.value.trim() || '';
+    const updated = await api(`/api/projects/${projectId}`, {
+      method: 'PATCH', body: JSON.stringify({ extra_prompt: extraPrompt }),
+    });
+    if (state.current?.id === projectId) {
+      state.current = updated;
+      state.current.status = 'planning';
+      renderPlanning();
+    }
     const result = await api(`/api/projects/${projectId}/outline/generate`, { method: 'POST' });
     if (state.current?.id === projectId) state.current = result;
     await loadProjects();

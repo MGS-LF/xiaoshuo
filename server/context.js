@@ -93,6 +93,7 @@ export function buildWritingContext(project, chapterNum) {
     `# 小说：《${project.title}》`,
     `类型：${project.genre} | 主题：${project.theme}`,
     project.style ? `文风：${project.style}` : '',
+    project.extra_prompt ? `用户自定义设定（必须遵守）：${project.extra_prompt}` : '',
     '',
     '## 世界与设定',
     worldBrief || '（无）',
@@ -310,7 +311,8 @@ export async function generateOutline(project, settings) {
 - 总章数：${project.chapter_count}（chapters 数组必须正好 ${project.chapter_count} 项，num 从 1 到 ${project.chapter_count}）
 - 每章约 ${project.words_per_chapter || 2000} 字量级的情节密度
 - 文风偏好：${project.style || '流畅网文，画面感强'}
-- 额外要求：${project.extra_prompt || '无'}
+    - 用户自定义硬性设定：${project.extra_prompt || '无'}
+    - 必须优先遵守用户自定义设定，不得擅自修改其中预设的人物姓名、身份、关系、背景、世界规则和禁用内容
 - 人物 4-8 个主要角色即可
 - 时间线覆盖全书节奏
 - 章节之间因果连贯，有起承转合与爽点/张力节奏`;

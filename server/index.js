@@ -149,6 +149,8 @@ app.get('/api/projects', (req, res) => res.json(db.listProjects()));
 app.post('/api/projects', (req, res) => {
   try {
     const { title, genre, theme, chapterCount, words } = validateProjectInput(req.body);
+    const extraPrompt = String(req.body.extra_prompt || '').trim();
+    if (extraPrompt.length > 10000) throw new Error('自定义设定不能超过 10000 字');
     const project = db.createProject({
       id: uuid(),
       title,
@@ -157,7 +159,7 @@ app.post('/api/projects', (req, res) => {
       chapter_count: chapterCount,
       words_per_chapter: words,
       style: String(req.body.style || '').trim(),
-      extra_prompt: String(req.body.extra_prompt || '').trim(),
+      extra_prompt: extraPrompt,
       status: 'draft',
     });
     res.status(201).json(parseProject(project));
@@ -169,6 +171,19 @@ app.post('/api/projects', (req, res) => {
 app.get('/api/projects/:id', (req, res) => {
   const project = requireProject(req, res);
   if (project) res.json(parseProject(project));
+});
+
+app.patch('/api/projects/:id', (req, res) => {
+  const project = requireProject(req, res);
+  if (!project) return;
+  if (project.status !== 'draft') {
+    return res.status(409).json({ error: '只能在生成大纲前修改自定义设定' });
+  }
+  const extraPrompt = String(req.body.extra_prompt || '').trim();
+  if (extraPrompt.length > 10000) {
+    return res.status(400).json({ error: '自定义设定不能超过 10000 字' });
+  }
+  res.json(parseProject(db.updateProject(project.id, { extra_prompt: extraPrompt })));
 });
 
 app.delete('/api/projects/:id', (req, res) => {
