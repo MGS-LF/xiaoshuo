@@ -73,7 +73,7 @@
         <label>新书名<input name="title" required maxlength="80"></label>
         <label>类型<input name="genre" required maxlength="50"></label>
         <label class="full">新主题<input name="theme" required maxlength="300"></label>
-        <label>章节数<input name="chapter_count" type="number" required min="1" max="200"></label>
+        <label>章节数<input name="chapter_count" type="number" required min="1" max="1000"></label>
         <label>每章字数<input name="words_per_chapter" type="number" required min="500" max="10000" step="100"></label>
         <label class="full">文风<input name="style"></label>
         <label class="full">补充或修改设定
@@ -95,7 +95,7 @@
       </div>
       <div class="form-grid">
         <label>从哪一章开始<select name="start_chapter" required></select></label>
-        <label>新的总章数<input name="chapter_count" type="number" required min="1" max="200"></label>
+        <label>新的总章数<input name="chapter_count" type="number" required min="1" max="1000"></label>
         <label class="full">后续调整要求
           <textarea name="instruction" required maxlength="5000" placeholder="例如：从这里转为双线调查，保留前文伏笔；增加一名与主角立场相反的新角色，并在第18章前完成第一次正面冲突。"></textarea>
         </label>

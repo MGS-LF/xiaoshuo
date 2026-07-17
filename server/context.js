@@ -15,6 +15,8 @@ import * as db from './db.js';
 
 const RECENT_FULL_CHAPTERS = 1;
 const RECENT_SUMMARY_CHAPTERS = 5;
+const OUTLINE_BATCH_SIZE = 40;
+const BATCHED_OUTLINE_THRESHOLD = 50;
 
 function safeJSON(value, fallback) {
   try {
@@ -63,6 +65,68 @@ export function buildReferenceContext(project) {
   }
   sections.push('只借鉴抽象逻辑、节奏或文风特征；不得复制参考作品的人名、专有设定、具体事件、原句或章节标题。');
   return sections.join('\n\n').slice(0, 9000);
+}
+
+async function generateChapterBatches({
+  project,
+  plan,
+  startChapter,
+  endChapter,
+  priorChapters = [],
+  instruction = '',
+  referenceContext = '',
+  settings,
+}) {
+  const generated = [];
+  const planBrief = JSON.stringify({
+    world: plan.world || {},
+    characters: plan.characters || [],
+    plot: plan.plot || plan.plot_update || {},
+    timeline: plan.timeline || [],
+    arcs: plan.arcs || [],
+  }).slice(0, 22000);
+
+  for (let batchStart = startChapter; batchStart <= endChapter; batchStart += OUTLINE_BATCH_SIZE) {
+    const batchEnd = Math.min(endChapter, batchStart + OUTLINE_BATCH_SIZE - 1);
+    const batchCount = batchEnd - batchStart + 1;
+    const recent = [...priorChapters, ...generated].slice(-4)
+      .map((chapter) => `第${chapter.num}章《${chapter.title}》：${chapter.summary}`)
+      .join('\n');
+    const prompt = `为《${project.title}》生成第${batchStart}章到第${batchEnd}章的逐章大纲。
+输出严格 JSON：{"chapters":[{"num":${batchStart},"title":"章名","summary":"80-150字剧情","key_events":["事件"],"pov":"视角人物","ending_hook":"章末钩子"}]}
+
+要求：
+- chapters 必须正好 ${batchCount} 项，num 从 ${batchStart} 连续到 ${batchEnd}
+- 全书总章数 ${endChapter}，当前批次必须符合全书阶段与收束节奏
+- 总纲：${planBrief}
+- 用户调整：${instruction || project.extra_prompt || '无'}
+- 上一批结尾：${recent || '这是第一批，从开篇建立冲突'}
+${referenceContext ? `- 参考约束：${referenceContext}` : ''}
+- 相邻章节因果连续，不得重复事件，不得提前透支后续阶段
+- 只输出 JSON`;
+    const raw = await chat(
+      [
+        { role: 'system', content: '你是长篇小说分章编辑，严格按指定编号输出合法 JSON。' },
+        { role: 'user', content: prompt },
+      ],
+      settings,
+      { temperature: 0.75, maxTokens: 14000 }
+    );
+    const data = extractJSON(raw);
+    let batch = Array.isArray(data.chapters) ? data.chapters : [];
+    while (batch.length < batchCount) {
+      const num = batchStart + batch.length;
+      batch.push({ num, title: `第${num}章`, summary: '待细化', key_events: [], ending_hook: '' });
+    }
+    batch = batch.slice(0, batchCount).map((chapter, index) => ({
+      ...chapter,
+      num: batchStart + index,
+      title: chapter.title || `第${batchStart + index}章`,
+      summary: chapter.summary || '',
+    }));
+    generated.push(...batch);
+  }
+  return generated;
 }
 
 export function buildWritingContext(project, chapterNum) {
@@ -314,6 +378,7 @@ export async function afterChapterWritten(projectId, chapterNum, settings) {
 
 export async function generateOutline(project, settings) {
   const referenceContext = buildReferenceContext(project);
+  const batched = project.chapter_count > BATCHED_OUTLINE_THRESHOLD;
   const prompt = `请为一部网络小说规划完整大纲。输出严格 JSON（可含 markdown 代码块）：
 {
   "title_suggestion": "书名建议",
@@ -344,6 +409,9 @@ export async function generateOutline(project, settings) {
     "ending_direction": "结局方向（可开放）",
     "hooks": ["伏笔1", "伏笔2"]
   },
+  "arcs": [
+    {"name":"篇章/卷名","chapter_range":"1-50","goal":"阶段目标","turning_points":["转折"]}
+  ],
   "chapters": [
     {
       "num": 1,
@@ -359,7 +427,10 @@ export async function generateOutline(project, settings) {
 要求：
 - 类型：${project.genre}
 - 主题：${project.theme}
-- 总章数：${project.chapter_count}（chapters 数组必须正好 ${project.chapter_count} 项，num 从 1 到 ${project.chapter_count}）
+- 总章数：${project.chapter_count}
+${batched
+    ? '- 这是超长篇：先用 arcs 覆盖全书分卷和阶段节奏，本次 chapters 必须返回空数组 []，逐章大纲将按批次生成'
+    : `- chapters 数组必须正好 ${project.chapter_count} 项，num 从 1 到 ${project.chapter_count}`}
 - 每章约 ${project.words_per_chapter || 2000} 字量级的情节密度
 - 文风偏好：${project.style || '流畅网文，画面感强'}
 - 用户自定义硬性设定：${project.extra_prompt || '无'}
@@ -373,7 +444,9 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
     [
       {
         role: 'system',
-        content: '你是资深网文策划。只输出合法 JSON 对象。chapters 数量必须精确等于用户要求的章数。',
+        content: batched
+          ? '你是资深长篇网文策划。只输出合法 JSON，先规划完整分卷，chapters 返回空数组。'
+          : '你是资深网文策划。只输出合法 JSON 对象。chapters 数量必须精确等于用户要求的章数。',
       },
       { role: 'user', content: prompt },
     ],
@@ -383,26 +456,35 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
 
   const data = extractJSON(raw);
 
-  // 规范化 chapters
-  let chapters = data.chapters || [];
-  if (!Array.isArray(chapters)) chapters = [];
-  // 若不足则补空
-  while (chapters.length < project.chapter_count) {
-    const n = chapters.length + 1;
-    chapters.push({
-      num: n,
-      title: `第${n}章`,
-      summary: '待细化',
-      key_events: [],
-      ending_hook: '',
+  let chapters;
+  if (batched) {
+    chapters = await generateChapterBatches({
+      project,
+      plan: data,
+      startChapter: 1,
+      endChapter: project.chapter_count,
+      referenceContext,
+      settings,
     });
+  } else {
+    chapters = Array.isArray(data.chapters) ? data.chapters : [];
+    while (chapters.length < project.chapter_count) {
+      const n = chapters.length + 1;
+      chapters.push({
+        num: n,
+        title: `第${n}章`,
+        summary: '待细化',
+        key_events: [],
+        ending_hook: '',
+      });
+    }
+    chapters = chapters.slice(0, project.chapter_count).map((c, i) => ({
+      ...c,
+      num: i + 1,
+      title: c.title || `第${i + 1}章`,
+      summary: c.summary || '',
+    }));
   }
-  chapters = chapters.slice(0, project.chapter_count).map((c, i) => ({
-    ...c,
-    num: i + 1,
-    title: c.title || `第${i + 1}章`,
-    summary: c.summary || '',
-  }));
 
   return {
     title_suggestion: data.title_suggestion || project.title,
@@ -410,6 +492,7 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
     characters: data.characters || [],
     timeline: data.timeline || [],
     plot: data.plot || {},
+    arcs: data.arcs || [],
     chapters,
   };
 }
@@ -434,6 +517,7 @@ export async function regenerateContinuationOutline(
     : priorSummaryRaw;
   const previousChapter = priorChapters.at(-1);
   const remainingCount = newChapterCount - startChapter + 1;
+  const batched = remainingCount > BATCHED_OUTLINE_THRESHOLD;
   const referenceContext = buildReferenceContext(project);
   const characters = safeJSON(project.characters_json, []);
   const world = safeJSON(project.world_json, {});
@@ -464,6 +548,9 @@ export async function regenerateContinuationOutline(
   "timeline": [
     {"time":"后续阶段","event":"事件","chapter_range":"${startChapter}-${newChapterCount}"}
   ],
+  "arcs": [
+    {"name":"后续篇章/卷名","chapter_range":"${startChapter}-${newChapterCount}","goal":"阶段目标","turning_points":["转折"]}
+  ],
   "chapters": [
     {
       "num": ${startChapter},
@@ -477,7 +564,9 @@ export async function regenerateContinuationOutline(
 }
 
 硬性要求：
-- chapters 必须正好 ${remainingCount} 项，num 从 ${startChapter} 连续到 ${newChapterCount}
+${batched
+    ? '- 这是超长后续：本次先规划 arcs、timeline 和 plot_update，chapters 必须返回空数组 []，逐章大纲将按批次生成'
+    : `- chapters 必须正好 ${remainingCount} 项，num 从 ${startChapter} 连续到 ${newChapterCount}`}
 - 新的全书总章数为 ${newChapterCount}
 - timeline 只规划第${startChapter}章及之后，chapter_range 必须落在新范围内
 - 只有确实需要的新人物才放入 new_characters，不要重复已有角色
@@ -493,35 +582,59 @@ ${referenceContext ? `- 参考作品约束：\n${referenceContext}` : ''}
 
   const raw = await chat(
     [
-      { role: 'system', content: '你是长篇小说总编，擅长在不改动前文的前提下重构后续章节。只输出合法 JSON。' },
+      {
+        role: 'system',
+        content: batched
+          ? '你是长篇小说总编。先规划后续分卷与剧情方向，chapters 返回空数组，只输出合法 JSON。'
+          : '你是长篇小说总编，擅长在不改动前文的前提下重构后续章节。只输出合法 JSON。',
+      },
       { role: 'user', content: prompt },
     ],
     settings,
-    { temperature: 0.75, maxTokens: Math.max(5000, Math.min(16000, remainingCount * 320)) }
+    { temperature: 0.75, maxTokens: batched ? 8000 : Math.max(5000, Math.min(16000, remainingCount * 320)) }
   );
   const data = extractJSON(raw);
-  let generated = Array.isArray(data.chapters) ? data.chapters : [];
-  while (generated.length < remainingCount) {
-    const num = startChapter + generated.length;
-    generated.push({ num, title: `第${num}章`, summary: '待细化', key_events: [], ending_hook: '' });
-  }
-  generated = generated.slice(0, remainingCount).map((chapter, index) => ({
-    ...chapter,
-    num: startChapter + index,
-    title: chapter.title || `第${startChapter + index}章`,
-    summary: chapter.summary || '',
-  }));
   const newCharacters = Array.isArray(data.new_characters) ? data.new_characters : [];
   const characterNames = new Set(characters.map((character) => character.name));
   const mergedCharacters = [
     ...characters,
     ...newCharacters.filter((character) => character?.name && !characterNames.has(character.name)),
   ];
+  const updatedPlan = {
+    world,
+    characters: mergedCharacters,
+    plot: { ...plot, ...(data.plot_update || {}) },
+    timeline: [...preservedTimeline, ...(Array.isArray(data.timeline) ? data.timeline : [])],
+    arcs: data.arcs || [],
+  };
+  let generated;
+  if (batched) {
+    generated = await generateChapterBatches({
+      project,
+      plan: updatedPlan,
+      startChapter,
+      endChapter: newChapterCount,
+      priorChapters: prefix,
+      instruction,
+      referenceContext,
+      settings,
+    });
+  } else {
+    generated = Array.isArray(data.chapters) ? data.chapters : [];
+    while (generated.length < remainingCount) {
+      const num = startChapter + generated.length;
+      generated.push({ num, title: `第${num}章`, summary: '待细化', key_events: [], ending_hook: '' });
+    }
+    generated = generated.slice(0, remainingCount).map((chapter, index) => ({
+      ...chapter,
+      num: startChapter + index,
+      title: chapter.title || `第${startChapter + index}章`,
+      summary: chapter.summary || '',
+    }));
+  }
   return {
     ...outline,
-    plot: { ...plot, ...(data.plot_update || {}) },
-    characters: mergedCharacters,
-    timeline: [...preservedTimeline, ...(Array.isArray(data.timeline) ? data.timeline : [])],
+    ...updatedPlan,
     chapters: [...prefix, ...generated],
   };
 }

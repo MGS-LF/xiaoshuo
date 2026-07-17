@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import * as db from '../server/db.js';
-import { regenerateContinuationOutline } from '../server/context.js';
+import { generateOutline, regenerateContinuationOutline } from '../server/context.js';
 
 const projectId = randomUUID();
 const originalFetch = global.fetch;
@@ -112,4 +112,54 @@ test('replans only chapters at and after the selected chapter', async () => {
   assert.equal(chapters[0].status, 'done');
   assert.equal(chapters[1].title, '新标题2');
   assert.equal(chapters[3].title, '新标题4');
+});
+
+test('generates long outlines in sequential batches', async () => {
+  let calls = 0;
+  global.fetch = async (url, options) => {
+    calls++;
+    const request = JSON.parse(options.body);
+    const prompt = request.messages.at(-1).content;
+    const range = prompt.match(/第(\d+)章到第(\d+)章/);
+    const content = range
+      ? JSON.stringify({
+        chapters: Array.from(
+          { length: Number(range[2]) - Number(range[1]) + 1 },
+          (_, index) => {
+            const num = Number(range[1]) + index;
+            return { num, title: `长篇标题${num}`, summary: `长篇大纲${num}` };
+          }
+        ),
+      })
+      : JSON.stringify({
+        title_suggestion: '长篇测试',
+        world: { setting: '测试世界' },
+        characters: [{ name: '林默', role: '主角' }],
+        timeline: [{ time: '全书', event: '主线', chapter_range: '1-81' }],
+        plot: { premise: '长篇主线' },
+        arcs: [{ name: '第一卷', chapter_range: '1-81', goal: '完成主线' }],
+        chapters: [],
+      });
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const outline = await generateOutline({
+    id: randomUUID(),
+    title: '长篇测试',
+    genre: '玄幻',
+    theme: '成长',
+    chapter_count: 81,
+    words_per_chapter: 1000,
+    style: '',
+    extra_prompt: '',
+    reference_project_id: '',
+  }, { base_url: 'http://localhost:1', model: 'mock' });
+
+  assert.equal(calls, 4);
+  assert.equal(outline.chapters.length, 81);
+  assert.equal(outline.chapters[0].num, 1);
+  assert.equal(outline.chapters[80].num, 81);
+  assert.equal(outline.chapters[80].title, '长篇标题81');
 });

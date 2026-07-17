@@ -17,6 +17,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+const MAX_CHAPTERS = 1000;
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
@@ -60,8 +61,8 @@ function validateProjectInput(body) {
   const chapterCount = Number(body.chapter_count);
   const words = Number(body.words_per_chapter || 2000);
   if (!title || !genre || !theme) throw new Error('书名、类型和主题不能为空');
-  if (!Number.isInteger(chapterCount) || chapterCount < 1 || chapterCount > 200) {
-    throw new Error('章数应为 1 到 200 的整数');
+  if (!Number.isInteger(chapterCount) || chapterCount < 1 || chapterCount > MAX_CHAPTERS) {
+    throw new Error(`章数应为 1 到 ${MAX_CHAPTERS} 的整数`);
   }
   if (!Number.isInteger(words) || words < 500 || words > 10000) {
     throw new Error('每章字数应为 500 到 10000');
@@ -352,8 +353,8 @@ app.post('/api/projects/:id/outline/regenerate', asyncRoute(async (req, res) => 
   if (!Number.isInteger(startChapter) || startChapter < 1 || startChapter > project.chapter_count) {
     return res.status(400).json({ error: '起始章节必须是现有章节' });
   }
-  if (!Number.isInteger(newChapterCount) || newChapterCount < startChapter || newChapterCount > 200) {
-    return res.status(400).json({ error: `新总章数应在 ${startChapter} 到 200 之间` });
+  if (!Number.isInteger(newChapterCount) || newChapterCount < startChapter || newChapterCount > MAX_CHAPTERS) {
+    return res.status(400).json({ error: `新总章数应在 ${startChapter} 到 ${MAX_CHAPTERS} 之间` });
   }
   if (!instruction) return res.status(400).json({ error: '请填写后续调整要求' });
   if (instruction.length > 5000) return res.status(400).json({ error: '调整要求不能超过 5000 字' });

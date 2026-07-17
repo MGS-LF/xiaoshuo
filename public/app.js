@@ -204,7 +204,7 @@ function renderCreate() {
             </select>
           </label>
           <label class="full">主题<input name="theme" required maxlength="300" placeholder="例如：失忆调查员发现每个梦境都对应一桩未发生的案件"></label>
-          <label>章节数<input name="chapter_count" type="number" required min="1" max="200" value="20"></label>
+          <label>章节数<input name="chapter_count" type="number" required min="1" max="1000" value="20"></label>
           <label>每章字数<input name="words_per_chapter" type="number" required min="500" max="10000" step="100" value="2000"></label>
           <label class="full">文风<input name="style" placeholder="例如：冷峻克制，多用短句"></label>
           ${referenceFields()}
