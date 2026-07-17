@@ -220,6 +220,23 @@ export function replaceContinuation(projectId, startChapter, projectFields, chap
   return getProject(projectId);
 }
 
+export function recoverInterruptedJobs() {
+  db.prepare("UPDATE chapters SET status = 'pending' WHERE status = 'writing'").run();
+  db.prepare("UPDATE chapters SET status = 'generated' WHERE status = 'summarizing'").run();
+  db.prepare("UPDATE projects SET status = 'draft' WHERE status = 'planning'").run();
+  db.prepare(`
+    UPDATE projects
+    SET status = CASE
+      WHEN EXISTS (
+        SELECT 1 FROM chapters
+        WHERE chapters.project_id = projects.id AND chapters.status = 'done'
+      ) THEN 'writing'
+      ELSE 'ready'
+    END
+    WHERE status = 'replanning'
+  `).run();
+}
+
 export function getMemories(projectId, upToChapter = null) {
   if (upToChapter != null) {
     return db.prepare(

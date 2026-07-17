@@ -10,12 +10,12 @@
  */
 
 import { v4 as uuid } from 'uuid';
-import { chat, extractJSON } from './llm.js';
+import { chat, chatJSON, extractJSON } from './llm.js';
 import * as db from './db.js';
 
 const RECENT_FULL_CHAPTERS = 1;
 const RECENT_SUMMARY_CHAPTERS = 5;
-const OUTLINE_BATCH_SIZE = 40;
+const OUTLINE_BATCH_SIZE = 20;
 const BATCHED_OUTLINE_THRESHOLD = 50;
 
 function safeJSON(value, fallback) {
@@ -104,7 +104,7 @@ async function generateChapterBatches({
 ${referenceContext ? `- 参考约束：${referenceContext}` : ''}
 - 相邻章节因果连续，不得重复事件，不得提前透支后续阶段
 - 只输出 JSON`;
-    const raw = await chat(
+    const data = await chatJSON(
       [
         { role: 'system', content: '你是长篇小说分章编辑，严格按指定编号输出合法 JSON。' },
         { role: 'user', content: prompt },
@@ -112,7 +112,6 @@ ${referenceContext ? `- 参考约束：${referenceContext}` : ''}
       settings,
       { temperature: 0.75, maxTokens: 14000 }
     );
-    const data = extractJSON(raw);
     let batch = Array.isArray(data.chapters) ? data.chapters : [];
     while (batch.length < batchCount) {
       const num = batchStart + batch.length;
@@ -294,7 +293,7 @@ export async function summarizeChapter(project, chapter, settings) {
 正文或分段摘要：
 ${summarySource}`;
 
-  const raw = await chat(
+  const parsed = await chatJSON(
     [
       { role: 'system', content: '你只输出合法 JSON，不要 markdown 代码块外的说明。' },
       { role: 'user', content: prompt },
@@ -302,13 +301,6 @@ ${summarySource}`;
     settings,
     { temperature: 0.3, maxTokens: 1500 }
   );
-
-  let parsed;
-  try {
-    parsed = extractJSON(raw);
-  } catch {
-    return { summary: raw.slice(0, 500), memories: [] };
-  }
 
   const summary = parsed.summary || '';
   const memories = Array.isArray(parsed.memories) ? parsed.memories : [];
@@ -440,7 +432,7 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
 - 时间线覆盖全书节奏
 - 章节之间因果连贯，有起承转合与爽点/张力节奏`;
 
-  const raw = await chat(
+  const data = await chatJSON(
     [
       {
         role: 'system',
@@ -453,8 +445,6 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
     settings,
     { temperature: 0.8, maxTokens: 8000 }
   );
-
-  const data = extractJSON(raw);
 
   let chapters;
   if (batched) {
@@ -580,7 +570,7 @@ ${referenceContext ? `- 参考作品约束：\n${referenceContext}` : ''}
 - 不得让已发生的事件失效；从指定章节自然转向新要求
 - 只输出 JSON，不要解释`;
 
-  const raw = await chat(
+  const data = await chatJSON(
     [
       {
         role: 'system',
@@ -593,7 +583,6 @@ ${referenceContext ? `- 参考作品约束：\n${referenceContext}` : ''}
     settings,
     { temperature: 0.75, maxTokens: batched ? 8000 : Math.max(5000, Math.min(16000, remainingCount * 320)) }
   );
-  const data = extractJSON(raw);
   const newCharacters = Array.isArray(data.new_characters) ? data.new_characters : [];
   const characterNames = new Set(characters.map((character) => character.name));
   const mergedCharacters = [

@@ -1,3 +1,5 @@
+import { jsonrepair } from 'jsonrepair';
+
 /**
  * 可配置大模型客户端（OpenAI 兼容 API）
  * 支持：OpenAI / DeepSeek / 通义 / 智谱 / 硅基流动 / 本地 Ollama 等
@@ -125,13 +127,44 @@ export async function* chatStream(messages, settings, options = {}) {
   }
 }
 
+export async function chatJSON(messages, settings, options = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const retryMessages = attempt === 1
+      ? messages
+      : [
+        {
+          role: 'system',
+          content: `上一次输出不是合法 JSON。这是第 ${attempt} 次尝试，必须输出完整、合法、无截断的 JSON；字符串中的换行必须转义。`,
+        },
+        ...messages,
+      ];
+    const text = await chat(retryMessages, settings, options);
+    try {
+      return extractJSON(text);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(`模型连续 ${MAX_ATTEMPTS} 次返回无效 JSON：${lastError?.message || '未知解析错误'}`);
+}
+
 export function extractJSON(text) {
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const raw = fence ? fence[1].trim() : text.trim();
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('无法从模型输出中解析 JSON');
-  return JSON.parse(raw.slice(start, end + 1));
+  const candidate = raw.slice(start, end + 1);
+  try {
+    return JSON.parse(candidate);
+  } catch (originalError) {
+    try {
+      return JSON.parse(jsonrepair(candidate));
+    } catch {
+      throw new Error(`模型 JSON 格式错误：${originalError.message}`);
+    }
+  }
 }
 
 export function extractJSONArray(text) {

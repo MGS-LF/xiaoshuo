@@ -157,7 +157,7 @@ test('generates long outlines in sequential batches', async () => {
     reference_project_id: '',
   }, { base_url: 'http://localhost:1', model: 'mock' });
 
-  assert.equal(calls, 4);
+  assert.equal(calls, 6);
   assert.equal(outline.chapters.length, 81);
   assert.equal(outline.chapters[0].num, 1);
   assert.equal(outline.chapters[80].num, 81);

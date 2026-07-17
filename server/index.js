@@ -19,6 +19,8 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const MAX_CHAPTERS = 1000;
 
+db.recoverInterruptedJobs();
+
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, before, test } from 'node:test';
-import { chat } from '../server/llm.js';
+import { chat, chatJSON, extractJSON } from '../server/llm.js';
 
 let server;
 let baseUrl;
@@ -67,4 +67,31 @@ test('retries HTML responses and reports an endpoint hint', async () => {
     /HTML.*\/v1/
   );
   assert.equal(attempts, 3);
+});
+
+test('repairs unescaped control characters in model JSON', () => {
+  const malformed = ['{"summary":"第一行', '第二行","chapters":[]}'].join(String.fromCharCode(10));
+  const result = extractJSON(malformed);
+  assert.equal(result.summary, ['第一行', '第二行'].join(String.fromCharCode(10)));
+  assert.deepEqual(extractJSON('{"title":"第一章" "summary":"漏逗号"}'), {
+    title: '第一章',
+    summary: '漏逗号',
+  });
+});
+
+test('retries only the structured request when JSON cannot be repaired', async () => {
+  let jsonAttempts = 0;
+  global.fetch = async () => {
+    jsonAttempts++;
+    const content = jsonAttempts === 1 ? 'not json' : '{"chapters":[]}';
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const data = await chatJSON(
+    [{ role: 'user', content: 'return json' }],
+    { base_url: 'http://localhost:1', model: 'mock' }
+  );
+  assert.deepEqual(data, { chapters: [] });
+  assert.equal(jsonAttempts, 2);
 });
