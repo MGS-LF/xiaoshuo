@@ -116,6 +116,7 @@ test('replans only chapters at and after the selected chapter', async () => {
 
 test('generates long outlines in sequential batches', async () => {
   let calls = 0;
+  const progress = [];
   global.fetch = async (url, options) => {
     calls++;
     const request = JSON.parse(options.body);
@@ -155,11 +156,43 @@ test('generates long outlines in sequential batches', async () => {
     style: '',
     extra_prompt: '',
     reference_project_id: '',
-  }, { base_url: 'http://localhost:1', model: 'mock' });
+  }, { base_url: 'http://localhost:1', model: 'mock' }, {
+    onPlan: () => progress.push(1),
+    onBatch: ({ completedBatches }) => progress.push(completedBatches),
+  });
 
   assert.equal(calls, 6);
+  assert.deepEqual(progress, [1, 2, 3, 4, 5, 6]);
   assert.equal(outline.chapters.length, 81);
   assert.equal(outline.chapters[0].num, 1);
   assert.equal(outline.chapters[80].num, 81);
   assert.equal(outline.chapters[80].title, '长篇标题81');
+
+  calls = 0;
+  const resumed = await generateOutline({
+    id: randomUUID(),
+    title: '长篇测试',
+    genre: '玄幻',
+    theme: '成长',
+    chapter_count: 81,
+    words_per_chapter: 1000,
+    style: '',
+    extra_prompt: '',
+    reference_project_id: '',
+  }, { base_url: 'http://localhost:1', model: 'mock' }, {
+    checkpoint: {
+      plan: {
+        world: outline.world,
+        characters: outline.characters,
+        timeline: outline.timeline,
+        plot: outline.plot,
+        arcs: outline.arcs,
+        chapters: [],
+      },
+      chapters: outline.chapters.slice(0, 40),
+    },
+  });
+  assert.equal(calls, 3);
+  assert.equal(resumed.chapters.length, 81);
+  assert.equal(resumed.chapters[40].num, 41);
 });

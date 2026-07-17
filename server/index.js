@@ -9,6 +9,7 @@ import {
   afterChapterWritten,
   buildWritingContext,
   generateOutline,
+  getOutlineBatchCount,
   rebuildGlobalSummaryBefore,
   regenerateContinuationOutline,
   writeChapter,
@@ -44,7 +45,21 @@ function parseProject(project) {
     delete parsed[`${key}_json`];
   }
   parsed.chapters = db.listChapters(project.id);
+  parsed.generation_job = publicGenerationJob(db.getLatestGenerationJob(project.id));
   return parsed;
+}
+
+function publicGenerationJob(job) {
+  if (!job) return null;
+  return {
+    id: job.id,
+    status: job.status,
+    total_batches: job.total_batches,
+    completed_batches: job.completed_batches,
+    current_batch: job.current_batch,
+    error: job.error,
+    updated_at: job.updated_at,
+  };
 }
 
 function requireProject(req, res) {
@@ -164,6 +179,58 @@ function saveOutline(project, outline) {
     });
   }
   return normalized;
+}
+
+const activeOutlineJobs = new Set();
+
+async function runOutlineJob(jobId) {
+  if (activeOutlineJobs.has(jobId)) return;
+  activeOutlineJobs.add(jobId);
+  try {
+    const job = db.getGenerationJob(jobId);
+    const project = job && db.getProject(job.project_id);
+    if (!job || !project || job.status !== 'running') return;
+    let checkpoint = {};
+    try { checkpoint = JSON.parse(job.checkpoint_json || '{}'); } catch {}
+
+    const outline = await generateOutline(project, settings(), {
+      checkpoint,
+      onPlan: (plan) => {
+        checkpoint = { plan, chapters: [] };
+        db.updateGenerationJob(jobId, {
+          completed_batches: 1,
+          current_batch: 2,
+          checkpoint_json: JSON.stringify(checkpoint),
+        });
+      },
+      onBatch: ({ plan, chapters, completedBatches, totalBatches }) => {
+        checkpoint = { plan, chapters };
+        db.updateGenerationJob(jobId, {
+          total_batches: totalBatches,
+          completed_batches: completedBatches,
+          current_batch: Math.min(totalBatches, completedBatches + 1),
+          checkpoint_json: JSON.stringify(checkpoint),
+        });
+      },
+    });
+    saveOutline(project, outline);
+    db.updateGenerationJob(jobId, {
+      status: 'done',
+      completed_batches: job.total_batches,
+      current_batch: job.total_batches,
+      error: '',
+      checkpoint_json: JSON.stringify({ plan: checkpoint.plan, chapters: outline.chapters }),
+    });
+  } catch (error) {
+    const job = db.getGenerationJob(jobId);
+    if (job) {
+      db.updateGenerationJob(jobId, { status: 'failed', error: error.message });
+      db.updateProject(job.project_id, { status: 'planning_failed' });
+    }
+    console.error(error);
+  } finally {
+    activeOutlineJobs.delete(jobId);
+  }
 }
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -306,22 +373,49 @@ app.delete('/api/projects/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/projects/:id/outline/generate', asyncRoute(async (req, res) => {
+app.post('/api/projects/:id/outline/generate', (req, res) => {
   const project = requireProject(req, res);
   if (!project) return;
   if (project.status === 'writing' || project.status === 'completed') {
     return res.status(409).json({ error: '已开始写作，不能重新生成全书大纲' });
   }
-  db.updateProject(project.id, { status: 'planning' });
-  try {
-    const outline = await generateOutline(project, settings());
-    saveOutline(project, outline);
-    res.json(parseProject(db.getProject(project.id)));
-  } catch (error) {
-    db.updateProject(project.id, { status: 'draft' });
-    throw error;
+  const latest = db.getLatestGenerationJob(project.id);
+  if (latest?.status === 'running') {
+    return res.status(202).json(publicGenerationJob(latest));
   }
-}));
+  const totalBatches = getOutlineBatchCount(project.chapter_count);
+  const job = db.createGenerationJob({
+    id: uuid(),
+    project_id: project.id,
+    job_type: 'outline',
+    status: 'running',
+    total_batches: totalBatches,
+    completed_batches: 0,
+    current_batch: 1,
+    error: '',
+    checkpoint_json: '{}',
+  });
+  db.updateProject(project.id, { status: 'planning' });
+  setImmediate(() => void runOutlineJob(job.id));
+  res.status(202).json(publicGenerationJob(job));
+});
+
+app.post('/api/projects/:id/outline/retry', (req, res) => {
+  const project = requireProject(req, res);
+  if (!project) return;
+  const job = db.getLatestGenerationJob(project.id);
+  if (!job || job.status !== 'failed') {
+    return res.status(409).json({ error: '没有可恢复的失败批次' });
+  }
+  const resumed = db.updateGenerationJob(job.id, {
+    status: 'running',
+    current_batch: Math.min(job.total_batches, job.completed_batches + 1),
+    error: '',
+  });
+  db.updateProject(project.id, { status: 'planning' });
+  setImmediate(() => void runOutlineJob(job.id));
+  res.status(202).json(publicGenerationJob(resumed));
+});
 
 app.put('/api/projects/:id/outline', (req, res) => {
   const project = requireProject(req, res);

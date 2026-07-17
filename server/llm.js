@@ -48,6 +48,7 @@ export async function chat(messages, settings, options = {}) {
     try {
       attemptResponse = await fetch(endpoint, {
         method: 'POST',
+        signal: AbortSignal.timeout(options.timeout ?? (options.stream ? 600000 : 90000)),
         headers: {
           'Content-Type': 'application/json',
           ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),

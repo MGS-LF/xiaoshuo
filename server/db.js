@@ -63,6 +63,21 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS generation_jobs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    job_type TEXT NOT NULL DEFAULT 'outline',
+    status TEXT NOT NULL DEFAULT 'running',
+    total_batches INTEGER NOT NULL DEFAULT 1,
+    completed_batches INTEGER NOT NULL DEFAULT 0,
+    current_batch INTEGER NOT NULL DEFAULT 1,
+    error TEXT DEFAULT '',
+    checkpoint_json TEXT DEFAULT '{}',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
 `);
 
 const projectColumns = new Set(
@@ -220,10 +235,73 @@ export function replaceContinuation(projectId, startChapter, projectFields, chap
   return getProject(projectId);
 }
 
+export function createGenerationJob(job) {
+  db.prepare(`
+    INSERT INTO generation_jobs (
+      id, project_id, job_type, status, total_batches,
+      completed_batches, current_batch, error, checkpoint_json
+    ) VALUES (
+      @id, @project_id, @job_type, @status, @total_batches,
+      @completed_batches, @current_batch, @error, @checkpoint_json
+    )
+  `).run(job);
+  return getGenerationJob(job.id);
+}
+
+export function updateGenerationJob(id, fields) {
+  const allowed = [
+    'status', 'total_batches', 'completed_batches', 'current_batch',
+    'error', 'checkpoint_json',
+  ];
+  const sets = [];
+  const params = { id };
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      sets.push(`${key} = @${key}`);
+      params[key] = fields[key];
+    }
+  }
+  if (!sets.length) return getGenerationJob(id);
+  sets.push("updated_at = datetime('now')");
+  db.prepare(`UPDATE generation_jobs SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  return getGenerationJob(id);
+}
+
+export function getGenerationJob(id) {
+  return db.prepare('SELECT * FROM generation_jobs WHERE id = ?').get(id);
+}
+
+export function getLatestGenerationJob(projectId, jobType = 'outline') {
+  return db.prepare(`
+    SELECT * FROM generation_jobs
+    WHERE project_id = ? AND job_type = ?
+    ORDER BY rowid DESC LIMIT 1
+  `).get(projectId, jobType);
+}
+
 export function recoverInterruptedJobs() {
   db.prepare("UPDATE chapters SET status = 'pending' WHERE status = 'writing'").run();
   db.prepare("UPDATE chapters SET status = 'generated' WHERE status = 'summarizing'").run();
-  db.prepare("UPDATE projects SET status = 'draft' WHERE status = 'planning'").run();
+  db.prepare(`
+    UPDATE generation_jobs
+    SET status = 'failed',
+        error = '服务重启导致任务中断，可从当前批次继续',
+        updated_at = datetime('now')
+    WHERE status = 'running'
+  `).run();
+  db.prepare(`
+    UPDATE projects
+    SET status = CASE
+      WHEN EXISTS (
+        SELECT 1 FROM generation_jobs
+        WHERE generation_jobs.project_id = projects.id
+          AND generation_jobs.job_type = 'outline'
+          AND generation_jobs.status = 'failed'
+      ) THEN 'planning_failed'
+      ELSE 'draft'
+    END
+    WHERE status = 'planning'
+  `).run();
   db.prepare(`
     UPDATE projects
     SET status = CASE

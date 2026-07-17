@@ -8,6 +8,7 @@ const state = {
   continuousProjects: new Set(),
   deriveSource: null,
   replanSource: null,
+  outlineWatchers: new Set(),
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -85,7 +86,7 @@ async function api(url, options = {}) {
 
 const statuses = {
   draft: '待规划', planning: '规划中', outline_review: '审核大纲', ready: '待写作',
-  writing: '写作中', replanning: '重规划中', completed: '已完成',
+  planning_failed: '规划失败', writing: '写作中', replanning: '重规划中', completed: '已完成',
 };
 
 async function loadProjects() {
@@ -180,7 +181,7 @@ function render() {
     ? `<a class="btn secondary" href="/api/projects/${state.current.id}/export"><i data-lucide="download"></i><span class="action-label">导出</span></a>` : '';
   topActions.innerHTML = `<button class="btn secondary" id="deriveProject"><i data-lucide="copy-plus"></i><span class="action-label">衍生创作</span></button>${exportAction}`;
   $('#deriveProject').onclick = openDeriveDialog;
-  if (state.current.status === 'draft' || state.current.status === 'planning') return renderPlanning();
+  if (['draft', 'planning', 'planning_failed'].includes(state.current.status)) return renderPlanning();
   if (state.current.status === 'outline_review') return renderOutline();
   return renderStudio();
 }
@@ -256,23 +257,38 @@ function projectHead() {
 }
 
 function renderPlanning() {
-  const loading = state.current.status === 'planning';
+  const project = state.current;
+  const loading = project.status === 'planning';
+  const failed = project.status === 'planning_failed';
+  const job = project.generation_job;
+  const total = Math.max(1, Number(job?.total_batches || 1));
+  const completed = Math.min(total, Number(job?.completed_batches || 0));
+  const percent = Math.round(completed / total * 100);
   workspace.innerHTML = `${projectHead()}
     <section class="empty-stage">
-      <div class="stage-icon">${loading ? '<span class="loader"></span>' : '<i data-lucide="network"></i>'}</div>
-      <h2>${loading ? '正在推演故事结构' : '生成全书大纲'}</h2>
-      <p>${loading ? '模型正在组织世界观、人物弧光、时间线与逐章剧情。长篇规划可能需要数十秒。' : '大纲会按世界设定、主要人物、时间线、大体剧情和章节规划分块展示，确认后才开始写作。'}</p>
+      <div class="stage-icon">${loading ? '<span class="loader"></span>' : `<i data-lucide="${failed ? 'triangle-alert' : 'network'}"></i>`}</div>
+      <h2>${loading ? '正在推演故事结构' : failed ? '当前批次规划失败' : '生成全书大纲'}</h2>
+      <p>${loading ? '模型正在按批次组织世界观、人物弧光、时间线与逐章剧情。' : failed ? '已完成的批次保存在 SQLite，重试会从失败批次继续。' : '大纲会按世界设定、主要人物、时间线、大体剧情和章节规划分块展示，确认后才开始写作。'}</p>
+      ${(loading || failed) && job ? `<div class="planning-progress">
+        <div class="planning-progress-head"><strong>${failed ? `第 ${job.current_batch} 批失败` : `正在处理第 ${job.current_batch} / ${total} 批`}</strong><span>${completed} / ${total} · ${percent}%</span></div>
+        <div class="progress-line"><b style="width:${percent}%"></b></div>
+        ${job.error ? `<p class="planning-error">${escapeHtml(job.error)}</p>` : ''}
+      </div>` : ''}
       <div class="custom-brief">
         <label>自定义设定（可选）
-          <textarea id="planningCustomSetting" maxlength="10000" ${loading ? 'readonly' : ''} placeholder="预设人物、人物关系、世界规则、关键情节或其他必须遵守的内容">${escapeHtml(state.current.extra_prompt || '')}</textarea>
+          <textarea id="planningCustomSetting" maxlength="10000" ${loading || failed ? 'readonly' : ''} placeholder="预设人物、人物关系、世界规则、关键情节或其他必须遵守的内容">${escapeHtml(project.extra_prompt || '')}</textarea>
           <span class="field-help">预设人物的姓名、身份和关系会作为大纲的硬性约束</span>
         </label>
-        ${referenceFields(state.current.id, state.current.reference_project_id, state.current.reference_mode || 'logic')}
+        ${referenceFields(project.id, project.reference_project_id, project.reference_mode || 'logic')}
       </div>
-      <button class="btn primary" id="generateOutline" ${loading ? 'disabled' : ''}>${loading ? '<span class="loader"></span>规划中' : '<i data-lucide="sparkles"></i>生成大纲'}</button>
+      <button class="btn primary" id="generateOutline" ${loading ? 'disabled' : ''}>${loading ? '<span class="loader"></span>后台规划中' : failed ? '<i data-lucide="refresh-cw"></i>重试失败批次' : '<i data-lucide="sparkles"></i>生成大纲'}</button>
     </section>`;
-  if (!loading) $('#generateOutline').onclick = generateOutlineAction;
+  if (!loading) $('#generateOutline').onclick = failed ? retryOutlineBatch : generateOutlineAction;
   bindReferenceFields(workspace);
+  if (loading || failed) {
+    $$('.custom-brief select').forEach((select) => { select.disabled = true; });
+  }
+  if (loading) void watchOutlineJob(project.id);
   icons();
 }
 
@@ -281,6 +297,7 @@ async function generateOutlineAction() {
   const jobKey = outlineJobKey(projectId);
   state.jobs.set(jobKey, { projectId, type: 'outline', status: 'planning' });
   renderProjectList();
+  let started = false;
   try {
     const extraPrompt = $('#planningCustomSetting')?.value.trim() || '';
     const referenceProjectId = $('[name="reference_project_id"]', workspace)?.value || '';
@@ -297,10 +314,14 @@ async function generateOutlineAction() {
       state.current.status = 'planning';
       renderPlanning();
     }
-    const result = await api(`/api/projects/${projectId}/outline/generate`, { method: 'POST' });
-    if (state.current?.id === projectId) state.current = result;
-    await loadProjects();
-    if (state.current?.id === projectId) renderOutline();
+    const job = await api(`/api/projects/${projectId}/outline/generate`, { method: 'POST' });
+    started = true;
+    if (state.current?.id === projectId) {
+      state.current.status = 'planning';
+      state.current.generation_job = job;
+      renderPlanning();
+    }
+    void watchOutlineJob(projectId);
   } catch (error) {
     if (state.current?.id === projectId) {
       state.current.status = 'draft';
@@ -308,8 +329,58 @@ async function generateOutlineAction() {
     }
     toast(error.message, 'error');
   } finally {
-    state.jobs.delete(jobKey);
+    if (!started) {
+      state.jobs.delete(jobKey);
+      renderProjectList();
+    }
+  }
+}
+
+async function retryOutlineBatch() {
+  const projectId = state.current.id;
+  const key = outlineJobKey(projectId);
+  state.jobs.set(key, { projectId, type: 'outline', status: 'planning' });
+  renderProjectList();
+  try {
+    const job = await api(`/api/projects/${projectId}/outline/retry`, { method: 'POST' });
+    if (state.current?.id === projectId) {
+      state.current.status = 'planning';
+      state.current.generation_job = job;
+      renderPlanning();
+    }
+    void watchOutlineJob(projectId);
+  } catch (error) {
+    state.jobs.delete(key);
     renderProjectList();
+    toast(error.message, 'error');
+  }
+}
+
+async function watchOutlineJob(projectId) {
+  if (state.outlineWatchers.has(projectId)) return;
+  state.outlineWatchers.add(projectId);
+  state.jobs.set(outlineJobKey(projectId), { projectId, type: 'outline', status: 'planning' });
+  renderProjectList();
+  try {
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const project = await api(`/api/projects/${projectId}`);
+      if (state.current?.id === projectId) {
+        state.current = project;
+        render();
+      }
+      if (project.status !== 'planning') {
+        if (project.status === 'outline_review') toast('全书大纲规划完成');
+        break;
+      }
+    }
+  } catch (error) {
+    toast(`读取规划进度失败：${error.message}`, 'error');
+  } finally {
+    state.outlineWatchers.delete(projectId);
+    state.jobs.delete(outlineJobKey(projectId));
+    await loadProjects().catch(() => {});
+    if (state.current?.id === projectId) render();
   }
 }
 

@@ -133,6 +133,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .empty-stage .stage-icon svg { width: 27px; height: 27px; }
 .empty-stage h2 { margin: 0 0 10px; font: 700 22px "Noto Serif SC", serif; }
 .empty-stage p { max-width: 520px; margin: 0 auto 24px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.planning-progress { width: min(620px, 100%); margin: 0 auto 22px; padding: 14px 0; text-align: left; }
+.planning-progress-head { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 9px; font-size: 11px; }
+.planning-progress-head span { color: var(--muted); }
+.planning-error { margin: 10px 0 0 !important; color: #b23e2d !important; font-size: 11px !important; overflow-wrap: anywhere; }
 .custom-brief { max-width: 760px; margin: 0 auto 22px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); text-align: left; }
 .custom-brief textarea { min-height: 150px; }
 

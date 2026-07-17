@@ -18,6 +18,12 @@ const RECENT_SUMMARY_CHAPTERS = 5;
 const OUTLINE_BATCH_SIZE = 20;
 const BATCHED_OUTLINE_THRESHOLD = 50;
 
+export function getOutlineBatchCount(chapterCount) {
+  return chapterCount > BATCHED_OUTLINE_THRESHOLD
+    ? 1 + Math.ceil(chapterCount / OUTLINE_BATCH_SIZE)
+    : 1;
+}
+
 function safeJSON(value, fallback) {
   try {
     return JSON.parse(value || '');
@@ -75,9 +81,11 @@ async function generateChapterBatches({
   priorChapters = [],
   instruction = '',
   referenceContext = '',
+  existingChapters = [],
+  onBatch,
   settings,
 }) {
-  const generated = [];
+  const generated = [...existingChapters];
   const planBrief = JSON.stringify({
     world: plan.world || {},
     characters: plan.characters || [],
@@ -86,7 +94,11 @@ async function generateChapterBatches({
     arcs: plan.arcs || [],
   }).slice(0, 22000);
 
-  for (let batchStart = startChapter; batchStart <= endChapter; batchStart += OUTLINE_BATCH_SIZE) {
+  for (
+    let batchStart = startChapter + generated.length;
+    batchStart <= endChapter;
+    batchStart += OUTLINE_BATCH_SIZE
+  ) {
     const batchEnd = Math.min(endChapter, batchStart + OUTLINE_BATCH_SIZE - 1);
     const batchCount = batchEnd - batchStart + 1;
     const recent = [...priorChapters, ...generated].slice(-4)
@@ -124,6 +136,7 @@ ${referenceContext ? `- 参考约束：${referenceContext}` : ''}
       summary: chapter.summary || '',
     }));
     generated.push(...batch);
+    if (onBatch) await onBatch([...generated], { batchStart, batchEnd });
   }
   return generated;
 }
@@ -368,7 +381,7 @@ export async function afterChapterWritten(projectId, chapterNum, settings) {
   return { summary, globalSummary, memoryCount: memories.length };
 }
 
-export async function generateOutline(project, settings) {
+export async function generateOutline(project, settings, options = {}) {
   const referenceContext = buildReferenceContext(project);
   const batched = project.chapter_count > BATCHED_OUTLINE_THRESHOLD;
   const prompt = `请为一部网络小说规划完整大纲。输出严格 JSON（可含 markdown 代码块）：
@@ -432,19 +445,23 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
 - 时间线覆盖全书节奏
 - 章节之间因果连贯，有起承转合与爽点/张力节奏`;
 
-  const data = await chatJSON(
-    [
-      {
-        role: 'system',
-        content: batched
-          ? '你是资深长篇网文策划。只输出合法 JSON，先规划完整分卷，chapters 返回空数组。'
-          : '你是资深网文策划。只输出合法 JSON 对象。chapters 数量必须精确等于用户要求的章数。',
-      },
-      { role: 'user', content: prompt },
-    ],
-    settings,
-    { temperature: 0.8, maxTokens: 8000 }
-  );
+  let data = options.checkpoint?.plan;
+  if (!data) {
+    data = await chatJSON(
+      [
+        {
+          role: 'system',
+          content: batched
+            ? '你是资深长篇网文策划。只输出合法 JSON，先规划完整分卷，chapters 返回空数组。'
+            : '你是资深网文策划。只输出合法 JSON 对象。chapters 数量必须精确等于用户要求的章数。',
+        },
+        { role: 'user', content: prompt },
+      ],
+      settings,
+      { temperature: 0.8, maxTokens: 8000 }
+    );
+    if (batched && options.onPlan) await options.onPlan(data);
+  }
 
   let chapters;
   if (batched) {
@@ -454,6 +471,18 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
       startChapter: 1,
       endChapter: project.chapter_count,
       referenceContext,
+      existingChapters: options.checkpoint?.chapters || [],
+      onBatch: async (partialChapters, range) => {
+        if (options.onBatch) {
+          await options.onBatch({
+            plan: data,
+            chapters: partialChapters,
+            completedBatches: 1 + Math.ceil(partialChapters.length / OUTLINE_BATCH_SIZE),
+            totalBatches: getOutlineBatchCount(project.chapter_count),
+            range,
+          });
+        }
+      },
       settings,
     });
   } else {
@@ -474,6 +503,15 @@ ${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
       title: c.title || `第${i + 1}章`,
       summary: c.summary || '',
     }));
+    if (options.onBatch) {
+      await options.onBatch({
+        plan: data,
+        chapters,
+        completedBatches: 1,
+        totalBatches: 1,
+        range: { batchStart: 1, batchEnd: project.chapter_count },
+      });
+    }
   }
 
   return {
