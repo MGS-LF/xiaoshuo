@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>墨线 · 小说工坊</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark">墨</span>
+        <div><strong>墨线</strong><small>小说工坊</small></div>
+        <button class="icon-btn mobile-close" id="closeSidebar" title="关闭侧栏"><i data-lucide="x"></i></button>
+      </div>
+      <button class="new-book" id="newProject"><i data-lucide="plus"></i><span>新建小说</span></button>
+      <div class="sidebar-label">作品</div>
+      <nav class="project-list" id="projectList"></nav>
+      <div class="sidebar-footer">
+        <button class="sidebar-action" id="openSettings"><i data-lucide="settings-2"></i><span>模型设置</span><b id="modelDot"></b></button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn menu-btn" id="openSidebar" title="打开侧栏"><i data-lucide="menu"></i></button>
+        <div id="breadcrumb" class="breadcrumb">创作台</div>
+        <div class="top-actions" id="topActions"></div>
+      </header>
+      <div class="workspace" id="workspace"></div>
+    </main>
+  </div>
+
+  <dialog id="settingsDialog" class="dialog">
+    <form method="dialog" class="dialog-panel" id="settingsForm">
+      <div class="dialog-head">
+        <div><h2>大模型连接</h2><p>兼容 OpenAI Chat Completions 接口</p></div>
+        <button class="icon-btn" value="cancel" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-grid single">
+        <label>接口地址<input name="base_url" required placeholder="https://api.openai.com/v1"></label>
+        <label>API Key<input name="api_key" type="password" placeholder="已保存则留空"></label>
+        <label>模型名称<input name="model" required placeholder="gpt-4o-mini"></label>
+        <div class="two-col">
+          <label>温度<input name="temperature" type="number" min="0" max="2" step="0.05"></label>
+          <label>最大 Tokens<input name="max_tokens" type="number" min="256" step="256"></label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <span class="dialog-note"><i data-lucide="database"></i>配置保存在本机 SQLite</span>
+        <button type="button" class="btn secondary" id="testModel">测试连接</button>
+        <button type="submit" class="btn primary">保存配置</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-stack" id="toasts"></div>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
