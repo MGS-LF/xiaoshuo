@@ -16,6 +16,55 @@ import * as db from './db.js';
 const RECENT_FULL_CHAPTERS = 1;
 const RECENT_SUMMARY_CHAPTERS = 5;
 
+function safeJSON(value, fallback) {
+  try {
+    return JSON.parse(value || '');
+  } catch {
+    return fallback;
+  }
+}
+
+export function buildReferenceContext(project) {
+  if (!project.reference_project_id || project.reference_project_id === project.id) return '';
+  const reference = db.getProject(project.reference_project_id);
+  if (!reference) return '';
+
+  const mode = project.reference_mode || 'logic';
+  const plot = safeJSON(reference.plot_json, {});
+  const world = safeJSON(reference.world_json, {});
+  const characters = safeJSON(reference.characters_json, []);
+  const outline = safeJSON(reference.outline_json, {});
+  const chapterLogic = (outline.chapters || []).slice(0, 20)
+    .map((chapter) => `第${chapter.num}章 ${chapter.title}: ${chapter.summary}`)
+    .join('\n')
+    .slice(0, 4500);
+  const sampleChapter = db.listChapters(reference.id)
+    .filter((chapter) => chapter.content)
+    .at(-1);
+
+  const sections = [`【参考作品：《${reference.title}》】`];
+  if (mode === 'logic' || mode === 'expansion' || mode === 'comprehensive') {
+    sections.push(`核心逻辑：${plot.premise || reference.theme}`);
+    if (plot.conflict) sections.push(`冲突结构：${plot.conflict}`);
+    if (plot.structure) sections.push(`叙事结构：${plot.structure}`);
+    if (chapterLogic) sections.push(`章节推进参考：\n${chapterLogic}`);
+  }
+  if (mode === 'expansion' || mode === 'comprehensive') {
+    if (world.setting) sections.push(`世界展开方式：${String(world.setting).slice(0, 1200)}`);
+    if (characters.length) {
+      sections.push(`角色功能参考：${characters.slice(0, 8).map((item) => `${item.role || '角色'}-${item.arc || item.goal || ''}`).join('；')}`);
+    }
+  }
+  if (mode === 'style' || mode === 'comprehensive') {
+    sections.push(`文风标注：${reference.style || '从样本中提炼句式、节奏、视角和对话密度'}`);
+    if (sampleChapter?.content) {
+      sections.push(`文风样本（仅提炼特征，不得复用句子）：\n${sampleChapter.content.slice(0, 1800)}`);
+    }
+  }
+  sections.push('只借鉴抽象逻辑、节奏或文风特征；不得复制参考作品的人名、专有设定、具体事件、原句或章节标题。');
+  return sections.join('\n\n').slice(0, 9000);
+}
+
 export function buildWritingContext(project, chapterNum) {
   const chapters = db.listChapters(project.id);
   const done = chapters.filter((c) => c.status === 'done' && c.chapter_num < chapterNum);
@@ -94,6 +143,7 @@ export function buildWritingContext(project, chapterNum) {
     `类型：${project.genre} | 主题：${project.theme}`,
     project.style ? `文风：${project.style}` : '',
     project.extra_prompt ? `用户自定义设定（必须遵守）：${project.extra_prompt}` : '',
+    buildReferenceContext(project),
     '',
     '## 世界与设定',
     worldBrief || '（无）',
@@ -263,6 +313,7 @@ export async function afterChapterWritten(projectId, chapterNum, settings) {
 }
 
 export async function generateOutline(project, settings) {
+  const referenceContext = buildReferenceContext(project);
   const prompt = `请为一部网络小说规划完整大纲。输出严格 JSON（可含 markdown 代码块）：
 {
   "title_suggestion": "书名建议",
@@ -311,8 +362,9 @@ export async function generateOutline(project, settings) {
 - 总章数：${project.chapter_count}（chapters 数组必须正好 ${project.chapter_count} 项，num 从 1 到 ${project.chapter_count}）
 - 每章约 ${project.words_per_chapter || 2000} 字量级的情节密度
 - 文风偏好：${project.style || '流畅网文，画面感强'}
-    - 用户自定义硬性设定：${project.extra_prompt || '无'}
-    - 必须优先遵守用户自定义设定，不得擅自修改其中预设的人物姓名、身份、关系、背景、世界规则和禁用内容
+- 用户自定义硬性设定：${project.extra_prompt || '无'}
+- 必须优先遵守用户自定义设定，不得擅自修改其中预设的人物姓名、身份、关系、背景、世界规则和禁用内容
+${referenceContext ? `- 参考要求：\n${referenceContext}` : ''}
 - 人物 4-8 个主要角色即可
 - 时间线覆盖全书节奏
 - 章节之间因果连贯，有起承转合与爽点/张力节奏`;
@@ -360,6 +412,159 @@ export async function generateOutline(project, settings) {
     plot: data.plot || {},
     chapters,
   };
+}
+
+export async function regenerateContinuationOutline(
+  project,
+  startChapter,
+  newChapterCount,
+  instruction,
+  settings
+) {
+  const outline = safeJSON(project.outline_json, {});
+  const existingChapters = Array.isArray(outline.chapters) ? outline.chapters : [];
+  const prefix = existingChapters.filter((chapter) => Number(chapter.num) < startChapter);
+  const chapters = db.listChapters(project.id);
+  const priorChapters = chapters.filter((chapter) => chapter.chapter_num < startChapter);
+  const priorSummaryRaw = priorChapters
+    .map((chapter) => `第${chapter.chapter_num}章《${chapter.title}》：${chapter.summary || chapter.outline}`)
+    .join('\n');
+  const priorSummary = priorSummaryRaw.length > 9000
+    ? `${priorSummaryRaw.slice(0, 1800)}\n...\n${priorSummaryRaw.slice(-7000)}`
+    : priorSummaryRaw;
+  const previousChapter = priorChapters.at(-1);
+  const remainingCount = newChapterCount - startChapter + 1;
+  const referenceContext = buildReferenceContext(project);
+  const characters = safeJSON(project.characters_json, []);
+  const world = safeJSON(project.world_json, {});
+  const plot = safeJSON(project.plot_json, {});
+  const existingTimeline = Array.isArray(outline.timeline)
+    ? outline.timeline
+    : safeJSON(project.timeline_json, []);
+  const preservedTimeline = existingTimeline.filter((item) => {
+    const range = String(item.chapter_range || '');
+    const numbers = range.match(/\d+/g)?.map(Number) || [];
+    return numbers.length && Math.max(...numbers) < startChapter;
+  });
+
+  const prompt = `重新规划《${project.title}》从第${startChapter}章开始的后续章节。
+第1章到第${startChapter - 1}章已经发生，绝对不能修改、重写或与其冲突。
+
+输出严格 JSON：
+{
+  "plot_update": {
+    "conflict": "重规划后的后续核心冲突",
+    "structure": "后续结构",
+    "ending_direction": "新的结局方向",
+    "hooks": ["新增或保留的伏笔"]
+  },
+  "new_characters": [
+    {"name":"新增人物","role":"定位","personality":"性格","goal":"目标","arc":"人物弧光"}
+  ],
+  "timeline": [
+    {"time":"后续阶段","event":"事件","chapter_range":"${startChapter}-${newChapterCount}"}
+  ],
+  "chapters": [
+    {
+      "num": ${startChapter},
+      "title": "章名",
+      "summary": "本章剧情要点 80-150字",
+      "key_events": ["事件1"],
+      "pov": "视角人物",
+      "ending_hook": "章末钩子"
+    }
+  ]
+}
+
+硬性要求：
+- chapters 必须正好 ${remainingCount} 项，num 从 ${startChapter} 连续到 ${newChapterCount}
+- 新的全书总章数为 ${newChapterCount}
+- timeline 只规划第${startChapter}章及之后，chapter_range 必须落在新范围内
+- 只有确实需要的新人物才放入 new_characters，不要重复已有角色
+- 修改要求：${instruction || '延续已有主线，优化后续节奏和因果'}
+- 已完成章节摘要：\n${priorSummary || '（从第1章重新规划，无前置章节）'}
+- 上一章结尾：\n${previousChapter?.content?.slice(-2500) || '（无）'}
+- 主要人物：${JSON.stringify(characters).slice(0, 6000)}
+- 世界设定：${JSON.stringify(world).slice(0, 3500)}
+- 原剧情方向：${JSON.stringify(plot).slice(0, 3500)}
+${referenceContext ? `- 参考作品约束：\n${referenceContext}` : ''}
+- 不得让已发生的事件失效；从指定章节自然转向新要求
+- 只输出 JSON，不要解释`;
+
+  const raw = await chat(
+    [
+      { role: 'system', content: '你是长篇小说总编，擅长在不改动前文的前提下重构后续章节。只输出合法 JSON。' },
+      { role: 'user', content: prompt },
+    ],
+    settings,
+    { temperature: 0.75, maxTokens: Math.max(5000, Math.min(16000, remainingCount * 320)) }
+  );
+  const data = extractJSON(raw);
+  let generated = Array.isArray(data.chapters) ? data.chapters : [];
+  while (generated.length < remainingCount) {
+    const num = startChapter + generated.length;
+    generated.push({ num, title: `第${num}章`, summary: '待细化', key_events: [], ending_hook: '' });
+  }
+  generated = generated.slice(0, remainingCount).map((chapter, index) => ({
+    ...chapter,
+    num: startChapter + index,
+    title: chapter.title || `第${startChapter + index}章`,
+    summary: chapter.summary || '',
+  }));
+  const newCharacters = Array.isArray(data.new_characters) ? data.new_characters : [];
+  const characterNames = new Set(characters.map((character) => character.name));
+  const mergedCharacters = [
+    ...characters,
+    ...newCharacters.filter((character) => character?.name && !characterNames.has(character.name)),
+  ];
+  return {
+    ...outline,
+    plot: { ...plot, ...(data.plot_update || {}) },
+    characters: mergedCharacters,
+    timeline: [...preservedTimeline, ...(Array.isArray(data.timeline) ? data.timeline : [])],
+    chapters: [...prefix, ...generated],
+  };
+}
+
+export async function rebuildGlobalSummaryBefore(projectId, beforeChapter, settings) {
+  const chapters = db.listChapters(projectId)
+    .filter((chapter) => chapter.chapter_num < beforeChapter && chapter.status === 'done');
+  if (!chapters.length) return '';
+
+  const entries = chapters.map((chapter) =>
+    `第${chapter.chapter_num}章《${chapter.title}》：${chapter.summary || chapter.outline}`
+  );
+  const chunks = [];
+  let current = '';
+  for (const entry of entries) {
+    if (current.length + entry.length > 9000 && current) {
+      chunks.push(current);
+      current = '';
+    }
+    current += `${entry}\n`;
+  }
+  if (current) chunks.push(current);
+
+  const partials = [];
+  for (const chunk of chunks) {
+    partials.push(await chat(
+      [
+        { role: 'system', content: '将小说章节摘要压缩成连续剧情记忆，保留人物状态、因果、伏笔和时间位置。' },
+        { role: 'user', content: `压缩到500字以内：\n${chunk}` },
+      ],
+      settings,
+      { temperature: 0.2, maxTokens: 900 }
+    ));
+  }
+  if (partials.length === 1) return partials[0].trim();
+  return (await chat(
+    [
+      { role: 'system', content: '合并小说分段记忆，保留因果、人物状态、未解伏笔和当前时间线。' },
+      { role: 'user', content: `合并为800字以内的全局摘要：\n${partials.join('\n\n')}` },
+    ],
+    settings,
+    { temperature: 0.2, maxTokens: 1400 }
+  )).trim();
 }
 
 export async function writeChapter(project, chapterNum, settings, { stream = false } = {}) {

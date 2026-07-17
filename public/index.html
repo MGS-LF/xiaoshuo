@@ -87,6 +87,27 @@
     </form>
   </dialog>
 
+  <dialog id="replanDialog" class="dialog">
+    <form method="dialog" class="dialog-panel" id="replanForm">
+      <div class="dialog-head">
+        <div><h2>重规划后续</h2><p id="replanProjectLabel"></p></div>
+        <button type="button" class="icon-btn" id="closeReplan" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="form-grid">
+        <label>从哪一章开始<select name="start_chapter" required></select></label>
+        <label>新的总章数<input name="chapter_count" type="number" required min="1" max="200"></label>
+        <label class="full">后续调整要求
+          <textarea name="instruction" required maxlength="5000" placeholder="例如：从这里转为双线调查，保留前文伏笔；增加一名与主角立场相反的新角色，并在第18章前完成第一次正面冲突。"></textarea>
+        </label>
+      </div>
+      <div class="impact-warning"><i data-lucide="triangle-alert"></i><span id="replanWarning"></span></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn secondary" id="cancelReplan">取消</button>
+        <button type="submit" class="btn primary"><i data-lucide="refresh-cw"></i>重新生成后续大纲</button>
+      </div>
+    </form>
+  </dialog>
+
   <div class="toast-stack" id="toasts"></div>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
   <script type="module" src="/app.js"></script>

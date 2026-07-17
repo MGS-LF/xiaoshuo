@@ -9,6 +9,8 @@ import {
   afterChapterWritten,
   buildWritingContext,
   generateOutline,
+  rebuildGlobalSummaryBefore,
+  regenerateContinuationOutline,
   writeChapter,
 } from './context.js';
 
@@ -65,6 +67,17 @@ function validateProjectInput(body) {
     throw new Error('每章字数应为 500 到 10000');
   }
   return { title, genre, theme, chapterCount, words };
+}
+
+const REFERENCE_MODES = new Set(['logic', 'style', 'expansion', 'comprehensive']);
+
+function validateReference(referenceProjectId, referenceMode, currentProjectId = '') {
+  const id = String(referenceProjectId || '').trim();
+  if (!id) return { id: '', mode: '' };
+  if (id === currentProjectId) throw new Error('不能参考当前作品自身');
+  if (!db.getProject(id)) throw new Error('参考作品不存在');
+  const mode = REFERENCE_MODES.has(referenceMode) ? referenceMode : 'logic';
+  return { id, mode };
 }
 
 function parseJSON(value, fallback) {
@@ -188,6 +201,7 @@ app.get('/api/projects', (req, res) => res.json(db.listProjects()));
 app.post('/api/projects', (req, res) => {
   try {
     const { title, genre, theme, chapterCount, words } = validateProjectInput(req.body);
+    const reference = validateReference(req.body.reference_project_id, req.body.reference_mode);
     const extraPrompt = String(req.body.extra_prompt || '').trim();
     if (extraPrompt.length > 10000) throw new Error('自定义设定不能超过 10000 字');
     const project = db.createProject({
@@ -201,7 +215,13 @@ app.post('/api/projects', (req, res) => {
       extra_prompt: extraPrompt,
       status: 'draft',
     });
-    res.status(201).json(parseProject(project));
+    if (reference.id) {
+      db.updateProject(project.id, {
+        reference_project_id: reference.id,
+        reference_mode: reference.mode,
+      });
+    }
+    res.status(201).json(parseProject(db.getProject(project.id)));
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -233,7 +253,13 @@ app.post('/api/projects/:id/derive', (req, res) => {
       extra_prompt: extraPrompt,
       status: 'draft',
     });
-    res.status(201).json(parseProject(project));
+    if (source.reference_project_id) {
+      db.updateProject(project.id, {
+        reference_project_id: source.reference_project_id,
+        reference_mode: source.reference_mode,
+      });
+    }
+    res.status(201).json(parseProject(db.getProject(project.id)));
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -254,7 +280,20 @@ app.patch('/api/projects/:id', (req, res) => {
   if (extraPrompt.length > 10000) {
     return res.status(400).json({ error: '自定义设定不能超过 10000 字' });
   }
-  res.json(parseProject(db.updateProject(project.id, { extra_prompt: extraPrompt })));
+  try {
+    const reference = validateReference(
+      req.body.reference_project_id,
+      req.body.reference_mode,
+      project.id
+    );
+    res.json(parseProject(db.updateProject(project.id, {
+      extra_prompt: extraPrompt,
+      reference_project_id: reference.id,
+      reference_mode: reference.mode,
+    })));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 app.delete('/api/projects/:id', (req, res) => {
@@ -302,6 +341,76 @@ app.post('/api/projects/:id/outline/confirm', (req, res) => {
   db.updateProject(project.id, { status: 'ready' });
   res.json(parseProject(db.getProject(project.id)));
 });
+
+app.post('/api/projects/:id/outline/regenerate', asyncRoute(async (req, res) => {
+  const project = requireProject(req, res);
+  if (!project) return;
+  if (!project.outline_json) return res.status(400).json({ error: '请先生成并确认原始大纲' });
+  const startChapter = Number(req.body.start_chapter);
+  const newChapterCount = Number(req.body.chapter_count);
+  const instruction = String(req.body.instruction || '').trim();
+  if (!Number.isInteger(startChapter) || startChapter < 1 || startChapter > project.chapter_count) {
+    return res.status(400).json({ error: '起始章节必须是现有章节' });
+  }
+  if (!Number.isInteger(newChapterCount) || newChapterCount < startChapter || newChapterCount > 200) {
+    return res.status(400).json({ error: `新总章数应在 ${startChapter} 到 200 之间` });
+  }
+  if (!instruction) return res.status(400).json({ error: '请填写后续调整要求' });
+  if (instruction.length > 5000) return res.status(400).json({ error: '调整要求不能超过 5000 字' });
+  const chapters = db.listChapters(project.id);
+  if (chapters.some((chapter) => ['writing', 'summarizing'].includes(chapter.status))) {
+    return res.status(409).json({ error: '当前有章节正在生成，请完成后再重规划' });
+  }
+
+  const previousStatus = project.status;
+  db.updateProject(project.id, { status: 'replanning' });
+  try {
+    const outline = await regenerateContinuationOutline(
+      project,
+      startChapter,
+      newChapterCount,
+      instruction,
+      settings()
+    );
+    const removesCompleted = chapters.some(
+      (chapter) => chapter.chapter_num >= startChapter && chapter.status === 'done'
+    );
+    const globalSummary = removesCompleted
+      ? await rebuildGlobalSummaryBefore(project.id, startChapter, settings())
+      : project.global_summary;
+    const suffix = `【从第${startChapter}章起的后续调整】\n${instruction}`;
+    const previousPrompt = String(project.extra_prompt || '').slice(0, Math.max(0, 10000 - suffix.length - 2));
+    const status = chapters.some(
+      (chapter) => chapter.chapter_num < startChapter && chapter.status === 'done'
+    ) ? 'writing' : 'ready';
+    const newChapters = outline.chapters
+      .filter((chapter) => chapter.num >= startChapter)
+      .map((chapter) => ({
+        id: uuid(),
+        project_id: project.id,
+        chapter_num: chapter.num,
+        title: chapter.title,
+        outline: chapter.summary,
+        content: '',
+        summary: '',
+        status: 'pending',
+      }));
+    db.replaceContinuation(project.id, startChapter, {
+      chapter_count: newChapterCount,
+      outline_json: JSON.stringify(outline),
+      characters_json: JSON.stringify(outline.characters || []),
+      timeline_json: JSON.stringify(outline.timeline || []),
+      plot_json: JSON.stringify(outline.plot || {}),
+      extra_prompt: [previousPrompt, suffix].filter(Boolean).join('\n\n'),
+      global_summary: globalSummary,
+      status,
+    }, newChapters);
+    res.json(parseProject(db.getProject(project.id)));
+  } catch (error) {
+    db.updateProject(project.id, { status: previousStatus });
+    throw error;
+  }
+}));
 
 app.put('/api/projects/:id/chapters/:num', (req, res) => {
   const project = requireProject(req, res);

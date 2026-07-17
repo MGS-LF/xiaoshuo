@@ -7,6 +7,7 @@ const state = {
   jobs: new Map(),
   continuousProjects: new Set(),
   deriveSource: null,
+  replanSource: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -17,8 +18,42 @@ const topActions = $('#topActions');
 
 const chapterJobKey = (projectId, chapterNum) => `chapter:${projectId}:${chapterNum}`;
 const outlineJobKey = (projectId) => `outline:${projectId}`;
+const replanJobKey = (projectId) => `replan:${projectId}`;
 const getChapterJob = (projectId, chapterNum) => state.jobs.get(chapterJobKey(projectId, chapterNum));
 const hasProjectJobs = (projectId) => [...state.jobs.values()].some((job) => job.projectId === projectId);
+
+const referenceModeOptions = [
+  ['logic', '大体逻辑'],
+  ['style', '相似文风'],
+  ['expansion', '结构扩充'],
+  ['comprehensive', '综合参考'],
+];
+
+function referenceFields(excludeId = '', selectedId = '', selectedMode = 'logic') {
+  const projects = state.projects.filter((project) => project.id !== excludeId);
+  return `<div class="reference-picker full">
+    <label>参考作品
+      <select name="reference_project_id">
+        <option value="">不参考其他作品</option>
+        ${projects.map((project) => `<option value="${project.id}" ${project.id === selectedId ? 'selected' : ''}>${escapeHtml(project.title)}</option>`).join('')}
+      </select>
+    </label>
+    <label>参考方式
+      <select name="reference_mode">
+        ${referenceModeOptions.map(([value, label]) => `<option value="${value}" ${value === selectedMode ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+    </label>
+  </div>`;
+}
+
+function bindReferenceFields(root) {
+  const projectSelect = root.querySelector('[name="reference_project_id"]');
+  const modeSelect = root.querySelector('[name="reference_mode"]');
+  if (!projectSelect || !modeSelect) return;
+  const sync = () => { modeSelect.disabled = !projectSelect.value; };
+  projectSelect.addEventListener('change', sync);
+  sync();
+}
 
 function icons() {
   if (window.lucide) window.lucide.createIcons();
@@ -50,7 +85,7 @@ async function api(url, options = {}) {
 
 const statuses = {
   draft: '待规划', planning: '规划中', outline_review: '审核大纲', ready: '待写作',
-  writing: '写作中', completed: '已完成',
+  writing: '写作中', replanning: '重规划中', completed: '已完成',
 };
 
 async function loadProjects() {
@@ -172,6 +207,7 @@ function renderCreate() {
           <label>章节数<input name="chapter_count" type="number" required min="1" max="200" value="20"></label>
           <label>每章字数<input name="words_per_chapter" type="number" required min="500" max="10000" step="100" value="2000"></label>
           <label class="full">文风<input name="style" placeholder="例如：冷峻克制，多用短句"></label>
+          ${referenceFields()}
           <label class="full">自定义设定（可选）
             <textarea name="extra_prompt" class="custom-setting-input" maxlength="10000" placeholder="可预设人物姓名、身份、性格、关系、世界规则、关键情节或禁用内容。&#10;例如：主角叫林默，22岁，法医专业；女主苏遥是他的青梅竹马，两人开篇处于冷战状态。人物姓名和关系不得修改。"></textarea>
             <span class="field-help">模型规划大纲和撰写正文时会优先遵守这里的内容</span>
@@ -184,6 +220,7 @@ function renderCreate() {
       </form>
     </section>`;
   $('#createForm').onsubmit = createProject;
+  bindReferenceFields($('#createForm'));
   icons();
 }
 
@@ -230,10 +267,12 @@ function renderPlanning() {
           <textarea id="planningCustomSetting" maxlength="10000" ${loading ? 'readonly' : ''} placeholder="预设人物、人物关系、世界规则、关键情节或其他必须遵守的内容">${escapeHtml(state.current.extra_prompt || '')}</textarea>
           <span class="field-help">预设人物的姓名、身份和关系会作为大纲的硬性约束</span>
         </label>
+        ${referenceFields(state.current.id, state.current.reference_project_id, state.current.reference_mode || 'logic')}
       </div>
       <button class="btn primary" id="generateOutline" ${loading ? 'disabled' : ''}>${loading ? '<span class="loader"></span>规划中' : '<i data-lucide="sparkles"></i>生成大纲'}</button>
     </section>`;
   if (!loading) $('#generateOutline').onclick = generateOutlineAction;
+  bindReferenceFields(workspace);
   icons();
 }
 
@@ -244,8 +283,14 @@ async function generateOutlineAction() {
   renderProjectList();
   try {
     const extraPrompt = $('#planningCustomSetting')?.value.trim() || '';
+    const referenceProjectId = $('[name="reference_project_id"]', workspace)?.value || '';
+    const referenceMode = $('[name="reference_mode"]', workspace)?.value || '';
     const updated = await api(`/api/projects/${projectId}`, {
-      method: 'PATCH', body: JSON.stringify({ extra_prompt: extraPrompt }),
+      method: 'PATCH', body: JSON.stringify({
+        extra_prompt: extraPrompt,
+        reference_project_id: referenceProjectId,
+        reference_mode: referenceMode,
+      }),
     });
     if (state.current?.id === projectId) {
       state.current = updated;
@@ -398,7 +443,8 @@ function renderStudio(preserveScroll = false) {
   const job = getChapterJob(p.id, current.chapter_num);
   const effectiveStatus = job?.status || current.status;
   const currentContent = job?.content ?? current.content ?? '';
-  const busy = Boolean(job) || ['writing', 'summarizing'].includes(effectiveStatus);
+  const projectReplanning = state.jobs.has(replanJobKey(p.id)) || p.status === 'replanning';
+  const busy = Boolean(job) || projectReplanning || ['writing', 'summarizing'].includes(effectiveStatus);
   const locked = effectiveStatus === 'done';
   const continuous = state.continuousProjects.has(p.id);
   const generateLabel = effectiveStatus === 'generated'
@@ -419,8 +465,9 @@ function renderStudio(preserveScroll = false) {
       <div class="outline-strip"><strong>本章目标：</strong>${escapeHtml(current.outline || '暂无章节大纲')}</div>
       <textarea class="novel-editor" id="chapterContent" placeholder="正文将在这里流式生成，也可以手动编辑。" ${busy || locked ? 'readonly' : ''}>${escapeHtml(currentContent)}</textarea>
       <div class="editor-actions">
-        <button class="btn primary" id="generateChapter" ${locked || busy ? 'disabled' : ''}>${busy ? '<span class="loader"></span>生成中' : generateLabel}</button>
+        <button class="btn primary" id="generateChapter" ${locked || busy ? 'disabled' : ''}>${busy ? `<span class="loader"></span>${projectReplanning ? '重规划中' : '生成中'}` : generateLabel}</button>
         <button class="btn secondary" id="saveChapter" ${busy || locked ? 'disabled' : ''}><i data-lucide="save"></i>保存正文</button>
+        <button class="btn secondary" id="replanContinuation" ${projectReplanning || hasProjectJobs(p.id) ? 'disabled' : ''}><i data-lucide="git-branch"></i>重规划后续</button>
         <button class="btn dark" id="continuousWrite" ${done === p.chapter_count || (busy && !continuous) ? 'disabled' : ''}><i data-lucide="fast-forward"></i>${continuous ? '当前章后停止' : '连续写作'}</button>
       </div>
       <details class="memory-panel"><summary>章节摘要与上下文记忆</summary><p>${escapeHtml(current.summary || '本章完成后自动生成摘要，并压缩进入全局记忆。')}</p></details>
@@ -437,6 +484,7 @@ function renderStudio(preserveScroll = false) {
     ? finalizeChapter(p.id, current.chapter_num)
     : generateOne(p.id, current.chapter_num);
   $('#continuousWrite').onclick = () => continuousWrite(p.id);
+  $('#replanContinuation').onclick = openReplanDialog;
   if (previousScroll != null) $('#chapterContent').scrollTop = previousScroll;
   icons();
 }
@@ -658,6 +706,84 @@ $('#deriveForm').onsubmit = async (event) => {
 $('#cancelDerive').onclick = () => $('#deriveDialog').close();
 $('#closeDerive').onclick = () => $('#deriveDialog').close();
 $('#closeSettings').onclick = () => $('#settingsDialog').close();
+
+function updateReplanWarning() {
+  const form = $('#replanForm');
+  const source = state.replanSource;
+  if (!source) return;
+  const start = Number(form.elements.start_chapter.value);
+  form.elements.chapter_count.min = String(start);
+  if (Number(form.elements.chapter_count.value) < start) {
+    form.elements.chapter_count.value = String(start);
+  }
+  const completed = source.chapters.filter(
+    (chapter) => chapter.chapter_num >= start && chapter.status === 'done'
+  ).length;
+  $('#replanWarning').textContent = completed
+    ? `第 ${start} 章及之后的大纲、正文和记忆会被替换，其中包含 ${completed} 个已完成章节；此前章节保持不变。`
+    : `第 ${start} 章及之后的章节标题和大纲会被替换；此前章节保持不变。`;
+}
+
+function openReplanDialog() {
+  const source = state.current;
+  if (!source?.chapters?.length) return;
+  state.replanSource = source;
+  const form = $('#replanForm');
+  form.elements.start_chapter.innerHTML = source.chapters.map((chapter) =>
+    `<option value="${chapter.chapter_num}" ${chapter.chapter_num === state.selectedChapter ? 'selected' : ''}>第 ${chapter.chapter_num} 章 · ${escapeHtml(chapter.title)}</option>`
+  ).join('');
+  form.elements.chapter_count.value = source.chapter_count;
+  form.elements.instruction.value = '';
+  $('#replanProjectLabel').textContent = `仅修改《${source.title}》指定章节之后的内容`;
+  updateReplanWarning();
+  $('#replanDialog').showModal();
+  icons();
+}
+
+$('#replanForm').elements.start_chapter.onchange = updateReplanWarning;
+$('#cancelReplan').onclick = () => $('#replanDialog').close();
+$('#closeReplan').onclick = () => $('#replanDialog').close();
+
+$('#replanForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const source = state.replanSource;
+  if (!source) return;
+  const form = event.currentTarget;
+  const button = event.submitter || form.querySelector('button[type="submit"]');
+  const body = {
+    start_chapter: Number(form.elements.start_chapter.value),
+    chapter_count: Number(form.elements.chapter_count.value),
+    instruction: form.elements.instruction.value.trim(),
+  };
+  const key = replanJobKey(source.id);
+  state.jobs.set(key, { projectId: source.id, type: 'replan', status: 'replanning' });
+  renderProjectList();
+  button.disabled = true;
+  $('#replanDialog').close();
+  if (state.current?.id === source.id) {
+    state.current.status = 'replanning';
+    renderStudio(true);
+  }
+  try {
+    const project = await api(`/api/projects/${source.id}/outline/regenerate`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (state.current?.id === source.id) {
+      state.current = project;
+      state.selectedChapter = Math.min(body.start_chapter, project.chapter_count);
+    }
+    toast(`已从第 ${body.start_chapter} 章重新规划后续`);
+  } catch (error) {
+    const project = await api(`/api/projects/${source.id}`).catch(() => null);
+    if (project && state.current?.id === source.id) state.current = project;
+    toast(error.message, 'error');
+  } finally {
+    state.jobs.delete(key);
+    button.disabled = false;
+    await loadProjects().catch(() => {});
+    if (state.current?.id === source.id) render();
+  }
+};
 
 async function openSettings() {
   try {

@@ -33,6 +33,8 @@ db.exec(`
     plot_json TEXT,
     world_json TEXT,
     global_summary TEXT DEFAULT '',
+    reference_project_id TEXT DEFAULT '',
+    reference_mode TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
   );
@@ -62,6 +64,16 @@ db.exec(`
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
   );
 `);
+
+const projectColumns = new Set(
+  db.prepare('PRAGMA table_info(projects)').all().map((column) => column.name)
+);
+if (!projectColumns.has('reference_project_id')) {
+  db.exec("ALTER TABLE projects ADD COLUMN reference_project_id TEXT DEFAULT ''");
+}
+if (!projectColumns.has('reference_mode')) {
+  db.exec("ALTER TABLE projects ADD COLUMN reference_mode TEXT DEFAULT ''");
+}
 
 export function getSetting(key, defaultValue = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -94,7 +106,7 @@ export function updateProject(id, fields) {
   const allowed = [
     'title', 'genre', 'theme', 'chapter_count', 'words_per_chapter', 'style',
     'extra_prompt', 'status', 'outline_json', 'characters_json', 'timeline_json',
-    'plot_json', 'world_json', 'global_summary'
+    'plot_json', 'world_json', 'global_summary', 'reference_project_id', 'reference_mode'
   ];
   const sets = [];
   const params = { id };
@@ -183,6 +195,29 @@ export function deleteChapterMemories(projectId, chapterNum) {
   db.prepare(
     'DELETE FROM chapter_memory WHERE project_id = ? AND chapter_num = ?'
   ).run(projectId, chapterNum);
+}
+
+export function deleteChaptersFrom(projectId, chapterNum) {
+  db.prepare(
+    'DELETE FROM chapters WHERE project_id = ? AND chapter_num >= ?'
+  ).run(projectId, chapterNum);
+}
+
+export function deleteMemoriesFrom(projectId, chapterNum) {
+  db.prepare(
+    'DELETE FROM chapter_memory WHERE project_id = ? AND chapter_num >= ?'
+  ).run(projectId, chapterNum);
+}
+
+export function replaceContinuation(projectId, startChapter, projectFields, chapters) {
+  const replace = db.transaction(() => {
+    deleteMemoriesFrom(projectId, startChapter);
+    deleteChaptersFrom(projectId, startChapter);
+    updateProject(projectId, projectFields);
+    for (const chapter of chapters) upsertChapter(chapter);
+  });
+  replace();
+  return getProject(projectId);
 }
 
 export function getMemories(projectId, upToChapter = null) {

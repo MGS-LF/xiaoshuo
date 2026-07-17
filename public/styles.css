@@ -104,6 +104,9 @@ input, select { height: 43px; padding: 0 12px; }
 textarea { min-height: 90px; padding: 11px 12px; resize: vertical; line-height: 1.65; }
 .custom-setting-input { min-height: 145px; }
 .field-help { color: #8a9199; font-size: 10px; font-weight: 400; line-height: 1.5; }
+.reference-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.custom-brief .reference-picker { margin-top: 16px; }
+select:disabled { background: #f1f3f4; color: #9aa0a7; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(8,127,109,.1); }
 .full { grid-column: 1 / -1; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 24px; }
@@ -203,6 +206,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .mode-option input:checked + span { background: white; color: var(--ink); box-shadow: 0 1px 5px rgba(20,25,30,.1); font-weight: 600; }
 .mode-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
 .derive-mode-note { min-height: 36px; margin: 0 0 17px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.impact-warning { display: flex; align-items: flex-start; gap: 8px; margin-top: 18px; padding: 11px 12px; border-left: 3px solid var(--warning); background: #fff9ed; color: #72531e; font-size: 11px; line-height: 1.6; }
+.impact-warning svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
 .toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 100; display: grid; gap: 8px; }
 .toast { max-width: 360px; padding: 11px 14px; border-left: 3px solid var(--accent); background: #1d2227; color: white; box-shadow: var(--shadow); font-size: 12px; }
 .toast.error { border-left-color: #f27461; }
@@ -227,6 +232,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .welcome h1, .page-title h1 { font-size: 28px; }
   .form-grid, .outline-grid { grid-template-columns: 1fr; }
   .two-col, .outline-card .mini-grid { grid-template-columns: 1fr; }
+  .reference-picker { grid-template-columns: 1fr; }
   .form-footer, .page-head, .sticky-confirm { align-items: stretch; flex-direction: column; }
   .form-footer .btn, .sticky-confirm .btn { width: 100%; }
   .dialog-actions { flex-wrap: wrap; }
