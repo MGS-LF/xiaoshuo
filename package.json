@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:e2e": "node scripts/browser-e2e.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
@@ -15,5 +16,8 @@
     "express": "^4.21.2",
     "jsonrepair": "^3.15.0",
     "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.61.1"
   }
 }
