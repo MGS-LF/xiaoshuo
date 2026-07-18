@@ -1,0 +1,12 @@
+.git
+.gitignore
+.cnb.yml
+.env
+data
+node_modules
+scripts
+test
+*.log
+*.db
+*.db-shm
+*.db-wal

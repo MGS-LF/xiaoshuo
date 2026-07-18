@@ -40,3 +40,21 @@ npm start
 - 强制按章节顺序生成，避免缺少前序状态导致剧情跳跃。
 
 数据库文件位于 `data/novels.db`。API Key 同样保存在本机数据库中，请勿将数据库文件提交或分享。
+
+## CNB 自动构建与容器启动
+
+推送到 `main` 后，CNB 会自动安装依赖、执行测试、启动应用检查健康状态，并发布以下两个镜像标签：
+
+- `docker.cnb.cool/tvtink/xiaoshuo:latest`
+- `docker.cnb.cool/tvtink/xiaoshuo:<提交短哈希>`
+
+在部署服务器上运行最新版，并持久化数据库：
+
+```bash
+docker run -d \
+  --name xiaoshuo \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v xiaoshuo-data:/app/data \
+  docker.cnb.cool/tvtink/xiaoshuo:latest
+```

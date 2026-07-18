@@ -1,14 +1,39 @@
-# 这里是一个示例 .cnb.yml
-
-# 匹配main分支
+# main 分支每次 push 后自动测试、启动检查并发布 Docker 镜像。
 main:
-  # 触发事件为 push 事件
   push:
-    # 这里是阶段任务示例，可配置任意多个阶段，这里以一个阶段为例
-    - name: "your first CNB building"
+    - name: 测试并发布小说生成器
+      docker:
+        image: node:22-bookworm
+        volumes:
+          - /root/.npm
+      services:
+        - docker
       stages:
-        # 使用流水线输出你的构建配置数据
-        - name: echo your build data
-          script: echo ${CNB_BUILD_USER} 通过 ${CNB_BRANCH} 分支触发了 ${CNB_EVENT} 事件
+        - name: 安装依赖
+          script: npm ci
 
-# 更多资料见 https://docs.cnb.cool/build/quick-start.html
+        - name: 执行自动化测试
+          script: npm test
+
+        - name: 启动应用并检查健康状态
+          script: |
+            DATABASE_PATH=/tmp/xiaoshuo-ci.db PORT=3000 node server/index.js > /tmp/xiaoshuo.log 2>&1 &
+            APP_PID=$!
+            trap 'kill $APP_PID 2>/dev/null || true' EXIT
+            node -e "(async()=>{for(let i=0;i<30;i++){try{const r=await fetch('http://127.0.0.1:3000/api/health');if(r.ok){console.log('应用启动成功');process.exit(0)}}catch{}await new Promise(r=>setTimeout(r,1000))}process.exit(1)})()"
+            kill $APP_PID
+            trap - EXIT
+
+        - name: 构建 Docker 镜像
+          script: |
+            docker build \
+              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT} \
+              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest \
+              .
+
+        - name: 推送 Docker 镜像
+          script: |
+            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}
+            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest
+
+# 更多资料见 https://docs.cnb.cool/zh/build/quick-start.html
