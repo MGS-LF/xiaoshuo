@@ -58,3 +58,5 @@ docker run -d \
   -v xiaoshuo-data:/app/data \
   docker.cnb.cool/tvtink/xiaoshuo:latest
 ```
+
+仓库同时配置了 CNB 仅预览模式。在分支页面点击“云原生开发”后，CNB 会自动安装依赖、在 `8686` 端口启动应用并直接打开网页，不需要进入 WebIDE。预览环境启用了数据备份和 1 小时离线保活。

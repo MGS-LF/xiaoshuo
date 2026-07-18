@@ -49,3 +49,42 @@ main:
             done
 
 # 更多资料见 https://docs.cnb.cool/zh/build/quick-start.html
+
+# 点击“云原生开发”后直接启动应用并打开网页预览。
+$:
+  web_trigger_vscode:
+    - name: 打开小说生成器开发环境
+      docker:
+        image: node:22-bookworm
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 2
+      services:
+        - name: vscode
+          options:
+            launch: npm ci && PORT=8686 npm start
+            keepAliveTimeout: 1h
+            daemon: true
+            backup: true
+      stages:
+        - name: 检查 Node 环境
+          script: node --version
+
+  vscode:
+    - name: 直接预览小说生成器
+      docker:
+        image: node:22-bookworm
+      runner:
+        tags: cnb:arch:amd64
+        cpus: 2
+      services:
+        - name: vscode
+          options:
+            onlyPreview: true
+            launch: npm ci && PORT=8686 npm start
+            keepAliveTimeout: 1h
+            daemon: true
+            backup: true
+      stages:
+        - name: 检查 Node 环境
+          script: node --version
