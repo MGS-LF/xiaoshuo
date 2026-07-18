@@ -24,6 +24,13 @@ main:
             kill $APP_PID
             trap - EXIT
 
+        - name: 登录 CNB Docker 制品库
+          script: |
+            printf '%s' "${CNB_TOKEN}" | docker login \
+              --username "${CNB_TOKEN_USER_NAME}" \
+              --password-stdin \
+              "${CNB_DOCKER_REGISTRY}"
+
         - name: 构建 Docker 镜像
           script: |
             docker build \
@@ -33,7 +40,12 @@ main:
 
         - name: 推送 Docker 镜像
           script: |
-            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT_SHORT}
-            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:latest
+            for TAG in "${CNB_COMMIT_SHORT}" latest; do
+              for ATTEMPT in 1 2 3; do
+                docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${TAG} && break
+                if [ "$ATTEMPT" = "3" ]; then exit 1; fi
+                sleep $((ATTEMPT * 2))
+              done
+            done
 
 # 更多资料见 https://docs.cnb.cool/zh/build/quick-start.html
